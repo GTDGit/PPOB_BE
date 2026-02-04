@@ -46,10 +46,12 @@ CREATE TABLE IF NOT EXISTS banks (
     id VARCHAR(36) PRIMARY KEY,
     code VARCHAR(10) UNIQUE NOT NULL,                    -- 014, 009, 002, 008
     name VARCHAR(100) NOT NULL,                          -- Bank Central Asia
-    short_name VARCHAR(20) NOT NULL,                     -- BCA
-    icon VARCHAR(50) NOT NULL,
-    icon_url TEXT,
+    short_name VARCHAR(50) NOT NULL,                     -- BCA
+    swift_code VARCHAR(20),                              -- SWIFT/BIC code
+    icon VARCHAR(255) DEFAULT '',
+    icon_url VARCHAR(255) DEFAULT '',
     transfer_fee BIGINT DEFAULT 0,                       -- 6500
+    transfer_fee_formatted VARCHAR(50) DEFAULT '',       -- Rp 2.500
     is_popular BOOLEAN DEFAULT FALSE,
     status VARCHAR(20) DEFAULT 'active',
     sort_order INTEGER DEFAULT 0,

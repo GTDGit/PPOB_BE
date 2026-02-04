@@ -1,32 +1,35 @@
 -- Migration: 028_create_banks_table
--- Description: Create banks table for storing bank information from Gerbang API
+-- Description: Add missing columns to banks table (already created in 011)
+-- Note: banks table was created in 011_create_providers_tables.sql
+--       This migration adds columns that may be missing from older versions
 
-CREATE TABLE IF NOT EXISTS banks (
-    id VARCHAR(36) PRIMARY KEY,
-    code VARCHAR(10) NOT NULL UNIQUE,
-    name VARCHAR(100) NOT NULL,
-    short_name VARCHAR(50) NOT NULL,
-    swift_code VARCHAR(20),
-    icon VARCHAR(255) DEFAULT '',
-    icon_url VARCHAR(255) DEFAULT '',
-    transfer_fee BIGINT DEFAULT 0,
-    transfer_fee_formatted VARCHAR(50) DEFAULT '',
-    is_popular BOOLEAN DEFAULT false,
-    status VARCHAR(20) DEFAULT 'active',
-    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
-);
+-- Add swift_code column if not exists
+DO $$ 
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'banks' AND column_name = 'swift_code') THEN
+        ALTER TABLE banks ADD COLUMN swift_code VARCHAR(20);
+    END IF;
+END $$;
 
--- Index for fast lookup by code (most common query)
-CREATE INDEX IF NOT EXISTS idx_banks_code ON banks(code);
+-- Add transfer_fee_formatted column if not exists
+DO $$ 
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'banks' AND column_name = 'transfer_fee_formatted') THEN
+        ALTER TABLE banks ADD COLUMN transfer_fee_formatted VARCHAR(50) DEFAULT '';
+    END IF;
+END $$;
 
--- Index for searching by name
+-- Alter existing columns to match new schema (safe operations)
+ALTER TABLE banks ALTER COLUMN short_name TYPE VARCHAR(50);
+ALTER TABLE banks ALTER COLUMN icon TYPE VARCHAR(255);
+ALTER TABLE banks ALTER COLUMN icon SET DEFAULT '';
+ALTER TABLE banks ALTER COLUMN icon_url TYPE VARCHAR(255);
+ALTER TABLE banks ALTER COLUMN icon_url SET DEFAULT '';
+
+-- Index for searching by name (if not exists)
 CREATE INDEX IF NOT EXISTS idx_banks_name ON banks(name);
 
--- Index for filtering by status
-CREATE INDEX IF NOT EXISTS idx_banks_status ON banks(status);
-
--- Index for popular banks filter
+-- Index for popular banks filter (if not exists)
 CREATE INDEX IF NOT EXISTS idx_banks_popular ON banks(is_popular) WHERE is_popular = true;
 
 -- Comment on table and columns
