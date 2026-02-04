@@ -118,7 +118,7 @@ func (m *Migrator) markExistingMigrationsAsApplied(migrationFiles []string) erro
 		"008_create_banners_table.sql":                    "banners",
 		"009_create_operators_table.sql":                  "operators",
 		"010_create_products_table.sql":                   "products",
-		"011_create_providers_tables.sql":                 "providers",
+		"011_create_providers_tables.sql":                 "ewallet_providers",
 		"012_create_transactions_table.sql":               "transactions",
 		"013_create_vouchers_tables.sql":                  "vouchers",
 		"014_create_contacts_table.sql":                   "contacts",

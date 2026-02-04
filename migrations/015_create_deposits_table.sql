@@ -190,8 +190,8 @@ CREATE TABLE IF NOT EXISTS deposit_unique_codes (
 
 CREATE INDEX idx_deposit_unique_codes_user ON deposit_unique_codes(user_id);
 CREATE INDEX idx_deposit_unique_codes_expires ON deposit_unique_codes(expires_at);
-CREATE UNIQUE INDEX idx_deposit_unique_codes_active ON deposit_unique_codes(user_id, unique_code, amount) 
-    WHERE expires_at > CURRENT_TIMESTAMP;
+-- Note: Removed partial unique index with CURRENT_TIMESTAMP as PostgreSQL requires IMMUTABLE functions in index predicates
+-- Uniqueness is enforced at application level instead
 
 -- =====================================================
 -- HELPER: Function to generate unique code
