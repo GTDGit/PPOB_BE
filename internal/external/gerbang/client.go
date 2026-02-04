@@ -57,10 +57,10 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body interf
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	// Set authentication headers
+	// Set authentication headers as per documentation
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Client-ID", c.config.ClientID)
-	req.Header.Set("X-Client-Secret", c.config.ClientSecret)
+	req.Header.Set("Authorization", "Bearer "+c.config.ClientSecret)
+	req.Header.Set("X-Client-Id", c.config.ClientID)
 	req.Header.Set("User-Agent", "PPOB.ID/1.0")
 
 	resp, err := c.httpClient.Do(req)
