@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(if not exist \"C:\\\\Users\\\\USER\\\\Website Pribadi\\\\ppob.id\\\\backend\\\\migrations\" mkdir \"C:\\\\Users\\\\USER\\\\Website Pribadi\\\\ppob.id\\\\backend\\\\migrations\")",
+      "Bash(dir /B \"C:\\\\Users\\\\USER\\\\Website Pribadi\\\\ppob.id\\\\backend\")",
+      "Bash(cd:*)",
+      "Bash(go build:*)",
+      "Bash(go vet:*)",
+      "Bash(done)",
+      "Bash(find:*)",
+      "Bash(go list:*)",
+      "Bash(grep:*)",
+      "Bash(for const in \"CodeInvalidDeviceID\" \"PlatformAndroid\" \"PlatformIOS\" \"PlatformWeb\")",
+      "Bash(do echo \"=== $const ===\")",
+      "Bash(for const in \"CodeSessionNotFound\" \"CodeInvalidDeviceID\")",
+      "Bash(do echo \"=== Checking $const ===\")",
+      "Bash(staticcheck:*)",
+      "Bash(xargs basename:*)",
+      "Bash(go run:*)",
+      "Bash(go test:*)",
+      "Bash(wc:*)"
+    ]
+  }
+}
