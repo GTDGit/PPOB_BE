@@ -42,19 +42,22 @@ type SendOTPResponse struct {
 	Error     string `json:"error,omitempty"`
 }
 
-// fazpassRequest represents the Fazpass API request structure
+// fazpassRequest represents the Fazpass API request structure for OTP
 type fazpassRequest struct {
-	Phone   string `json:"phone"`
-	Message string `json:"message"`
-	Gateway string `json:"gateway,omitempty"`
+	Phone      string `json:"phone"`
+	OTP        string `json:"otp"`
+	GatewayKey string `json:"gateway_key"`
 }
 
 // fazpassResponse represents the Fazpass API response
 type fazpassResponse struct {
-	Status  string `json:"status"`
+	Status  bool   `json:"status"`
 	Message string `json:"message"`
+	Code    string `json:"code"`
 	Data    *struct {
-		ID string `json:"id"`
+		ID      string `json:"id"`
+		OTP     string `json:"otp"`
+		Channel string `json:"channel"`
 	} `json:"data,omitempty"`
 }
 
@@ -63,14 +66,11 @@ func (c *Client) SendOTP(ctx context.Context, req SendOTPRequest) (*SendOTPRespo
 	// Format phone number (Fazpass accepts 08xx or 628xx format)
 	phone := formatPhoneForFazpass(req.Phone)
 
-	// Build message with OTP
-	message := fmt.Sprintf("Kode OTP ppob.id Anda adalah: %s. Berlaku 5 menit. Jangan berikan kode ini kepada siapapun.", req.OTP)
-
-	// Build request
+	// Build request as per Fazpass API docs
 	fazReq := fazpassRequest{
-		Phone:   phone,
-		Message: message,
-		Gateway: c.cfg.GatewayKey,
+		Phone:      phone,
+		OTP:        req.OTP,
+		GatewayKey: c.cfg.GatewayKey,
 	}
 
 	// Marshal request body
@@ -79,8 +79,8 @@ func (c *Client) SendOTP(ctx context.Context, req SendOTPRequest) (*SendOTPRespo
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// Build API URL
-	url := fmt.Sprintf("%s/v1/sms/send", c.cfg.APIURL)
+	// Build API URL - use /v1/otp/send endpoint
+	url := fmt.Sprintf("%s/v1/otp/send", c.cfg.APIURL)
 
 	// Create request
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -105,8 +105,8 @@ func (c *Client) SendOTP(ctx context.Context, req SendOTPRequest) (*SendOTPRespo
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	// Check response status
-	if apiResp.Status == "success" {
+	// Check response status (status is boolean in Fazpass API)
+	if apiResp.Status {
 		messageID := ""
 		if apiResp.Data != nil {
 			messageID = apiResp.Data.ID
@@ -119,7 +119,7 @@ func (c *Client) SendOTP(ctx context.Context, req SendOTPRequest) (*SendOTPRespo
 
 	return &SendOTPResponse{
 		Success: false,
-		Error:   apiResp.Message,
+		Error:   fmt.Sprintf("[%s] %s", apiResp.Code, apiResp.Message),
 	}, nil
 }
 
