@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/GTDGit/PPOB_BE/pkg/httplog"
 )
 
 type Config struct {
@@ -32,7 +34,8 @@ func NewClient(config Config) *Client {
 	return &Client{
 		config: config,
 		httpClient: &http.Client{
-			Timeout: config.Timeout,
+			Timeout:   config.Timeout,
+			Transport: httplog.NewTransport(nil, nil),
 		},
 	}
 }

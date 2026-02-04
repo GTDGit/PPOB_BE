@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/GTDGit/PPOB_BE/internal/config"
+	"github.com/GTDGit/PPOB_BE/pkg/httplog"
 )
 
 // Client handles WhatsApp Business API communication
@@ -22,7 +23,8 @@ func NewClient(cfg config.WhatsAppConfig) *Client {
 	return &Client{
 		cfg: cfg,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout:   30 * time.Second,
+			Transport: httplog.NewTransport(nil, nil),
 		},
 	}
 }

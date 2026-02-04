@@ -11,7 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/GTDGit/PPOB_BE/internal/config"
 	"github.com/GTDGit/PPOB_BE/internal/external/gerbang"
 	"github.com/GTDGit/PPOB_BE/internal/external/s3"
@@ -22,9 +21,13 @@ import (
 	"github.com/GTDGit/PPOB_BE/internal/service"
 	"github.com/GTDGit/PPOB_BE/pkg/database"
 	"github.com/GTDGit/PPOB_BE/pkg/redis"
+	"github.com/gin-gonic/gin"
 )
 
 func main() {
+	// Setup logger early for migrations
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
 	// Load config
 	cfg, err := config.Load()
 	if err != nil {
@@ -37,6 +40,13 @@ func main() {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
 	defer db.Close()
+
+	// Run database migrations
+	migrator := database.NewMigrator(db, logger)
+	if err := migrator.RunMigrations("./migrations"); err != nil {
+		log.Fatalf("Failed to run migrations: %v", err)
+	}
+	logger.Info("database migrations completed")
 
 	// Setup Redis
 	redisClient, err := redis.NewClient(cfg.Redis)
@@ -150,9 +160,6 @@ func main() {
 	if cfg.App.Env == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
-
-	// Setup logger
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	// Initialize product sync job
 	productSyncJob := job.NewProductSyncJob(

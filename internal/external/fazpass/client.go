@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/GTDGit/PPOB_BE/internal/config"
+	"github.com/GTDGit/PPOB_BE/pkg/httplog"
 )
 
 // Client handles Fazpass SMS API communication
@@ -22,7 +23,8 @@ func NewClient(cfg config.FazpassConfig) *Client {
 	return &Client{
 		cfg: cfg,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout:   30 * time.Second,
+			Transport: httplog.NewTransport(nil, nil),
 		},
 	}
 }
@@ -62,7 +64,7 @@ func (c *Client) SendOTP(ctx context.Context, req SendOTPRequest) (*SendOTPRespo
 	phone := formatPhoneForFazpass(req.Phone)
 
 	// Build message with OTP
-	message := fmt.Sprintf("Kode OTP PPOB.ID Anda adalah: %s. Berlaku 5 menit. Jangan berikan kode ini kepada siapapun.", req.OTP)
+	message := fmt.Sprintf("Kode OTP ppob.id Anda adalah: %s. Berlaku 5 menit. Jangan berikan kode ini kepada siapapun.", req.OTP)
 
 	// Build request
 	fazReq := fazpassRequest{

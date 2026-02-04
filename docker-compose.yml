@@ -47,7 +47,7 @@ services:
       POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --locale=C"
     volumes:
       - ppob_postgres_data:/var/lib/postgresql/data
-      - ./migrations:/docker-entrypoint-initdb.d:ro
+      # Note: Migrations are now handled by the app on startup
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-ppob_user} -d ${DB_NAME:-ppob_db}"]
       interval: 10s

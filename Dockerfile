@@ -30,6 +30,9 @@ ENV TZ=Asia/Jakarta
 # Copy binary from builder
 COPY --from=builder /app/main .
 
+# Copy migrations folder
+COPY --from=builder /app/migrations ./migrations
+
 # Create logs directory
 RUN mkdir -p /app/logs
 
