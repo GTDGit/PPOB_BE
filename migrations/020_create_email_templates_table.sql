@@ -776,10 +776,10 @@ Jika ini bukan Anda, segera amankan akun Anda.
 ppob.id security',
 4,
 '[{"name": "USER_NAME", "type": "string", "required": true}, {"name": "OLD_EMAIL", "type": "string", "required": true}, {"name": "NEW_EMAIL", "type": "string", "required": true}, {"name": "CHANGE_TIME", "type": "string", "required": true}]',
-TRUE, 90);
+TRUE, 90),
 
--- 4. Security Alert - Phone Changed
-('emt_security_phone_number_changed', 'SECURITY_PHONE_NUMBER_CHANGED', 'Email Diubah', 'Notifikasi ketika nomor telepon diubah', 'SECURITY',
+-- 5. Security Alert - Phone Changed
+('emt_security_phone_number_changed', 'SECURITY_PHONE_NUMBER_CHANGED', 'Nomor Telepon Diubah', 'Notifikasi ketika nomor telepon diubah', 'SECURITY',
     'Nomor Telepon Berhasil Diubah',
     '<!DOCTYPE html>
 <html lang="id">
