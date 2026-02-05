@@ -24,10 +24,11 @@ type Config struct {
 }
 
 type AppConfig struct {
-	Name string
-	Env  string
-	Port int
-	URL  string
+	Name        string
+	Env         string
+	Port        int
+	URL         string
+	FrontendURL string // Frontend app URL for email links
 }
 
 type DatabaseConfig struct {
@@ -83,7 +84,8 @@ type BrevoConfig struct {
 	APIKey               string
 	SenderEmail          string
 	SenderName           string
-	BaseURL              string // Application base URL for links
+	BaseURL              string // Backend API base URL
+	FrontendURL          string // Frontend app URL for email links
 	TemplateVerification int64  // Email verification template ID
 	TemplateNewLogin     int64  // New login alert template ID
 	TemplatePINChanged   int64  // PIN changed alert template ID
@@ -130,10 +132,11 @@ type TerritorySyncConfig struct {
 func Load() (*Config, error) {
 	cfg := &Config{
 		App: AppConfig{
-			Name: getEnv("APP_NAME", "ppob.id"),
-			Env:  getEnv("APP_ENV", "development"),
-			Port: getEnvAsInt("APP_PORT", 8080),
-			URL:  getEnv("APP_URL", "http://localhost:8080"),
+			Name:        getEnv("APP_NAME", "ppob.id"),
+			Env:         getEnv("APP_ENV", "development"),
+			Port:        getEnvAsInt("APP_PORT", 8080),
+			URL:         getEnv("APP_URL", "http://localhost:8080"),
+			FrontendURL: getEnv("FRONTEND_URL", "https://ppob.id"),
 		},
 		Database: DatabaseConfig{
 			Host:            getEnv("DB_HOST", "localhost"),
@@ -183,6 +186,7 @@ func Load() (*Config, error) {
 			SenderEmail:          getEnv("BREVO_SENDER_EMAIL", "noreply@ppob.id"),
 			SenderName:           getEnv("BREVO_SENDER_NAME", "PPOB.ID"),
 			BaseURL:              getEnv("APP_URL", "http://localhost:8080"),
+			FrontendURL:          getEnv("FRONTEND_URL", "https://ppob.id"),
 			TemplateVerification: int64(getEnvAsInt("BREVO_TEMPLATE_VERIFICATION", 1)),
 			TemplateNewLogin:     int64(getEnvAsInt("BREVO_TEMPLATE_NEW_LOGIN", 2)),
 			TemplatePINChanged:   int64(getEnvAsInt("BREVO_TEMPLATE_PIN_CHANGED", 3)),

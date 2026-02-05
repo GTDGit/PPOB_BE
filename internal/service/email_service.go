@@ -30,8 +30,9 @@ func (s *EmailService) SendVerificationEmail(ctx context.Context, email, name, t
 		return nil // Skip if not configured
 	}
 
-	// Build verification link
-	verificationLink := fmt.Sprintf("%s/v1/auth/email/verify?token=%s", s.cfg.BaseURL, token)
+	// Build verification link pointing to frontend app
+	// Frontend will call backend API to verify the token
+	verificationLink := fmt.Sprintf("%s/email-verify?token=%s&email=%s", s.cfg.FrontendURL, token, email)
 
 	// Send email
 	_, err := s.brevoClient.SendVerificationEmail(ctx, email, name, verificationLink)
