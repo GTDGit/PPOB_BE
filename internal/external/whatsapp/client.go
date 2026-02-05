@@ -62,6 +62,8 @@ type templateLanguage struct {
 
 type templateComponent struct {
 	Type       string              `json:"type"`
+	SubType    string              `json:"sub_type,omitempty"`
+	Index      string              `json:"index,omitempty"`
 	Parameters []templateParameter `json:"parameters,omitempty"`
 }
 
@@ -99,6 +101,17 @@ func (c *Client) SendOTP(ctx context.Context, req SendOTPRequest) (*SendOTPRespo
 			Components: []templateComponent{
 				{
 					Type: "body",
+					Parameters: []templateParameter{
+						{
+							Type: "text",
+							Text: req.OTP,
+						},
+					},
+				},
+				{
+					Type:    "button",
+					SubType: "url",
+					Index:   "0",
 					Parameters: []templateParameter{
 						{
 							Type: "text",
