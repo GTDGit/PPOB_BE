@@ -28,54 +28,54 @@ type Deposit struct {
 
 // DepositMethod represents available deposit method
 type DepositMethod struct {
-	Code        string `json:"code"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Icon        string `json:"icon"`
-	IconURL     string `json:"iconUrl"`
-	FeeType     string `json:"feeType"`
-	FeeAmount   int64  `json:"feeAmount"`
-	MinAmount   int64  `json:"minAmount"`
-	MaxAmount   int64  `json:"maxAmount"`
-	Schedule    string `json:"schedule"`
-	Position    int    `json:"position"`
-	Status      string `json:"status"`
+	Code        string `db:"code" json:"code"`
+	Name        string `db:"name" json:"name"`
+	Description string `db:"description" json:"description"`
+	Icon        string `db:"icon" json:"icon"`
+	IconURL     string `db:"icon_url" json:"iconUrl"`
+	FeeType     string `db:"fee_type" json:"feeType"`
+	FeeAmount   int64  `db:"fee_amount" json:"feeAmount"`
+	MinAmount   int64  `db:"min_amount" json:"minAmount"`
+	MaxAmount   int64  `db:"max_amount" json:"maxAmount"`
+	Schedule    string `db:"schedule" json:"schedule"`
+	Position    int    `db:"position" json:"position"`
+	Status      string `db:"status" json:"status"`
 }
 
 // RetailProvider represents retail store provider
 type RetailProvider struct {
-	Code      string `json:"code"`
-	Name      string `json:"name"`
-	Icon      string `json:"icon"`
-	IconURL   string `json:"iconUrl"`
-	Fee       int64  `json:"fee"`
-	MinAmount int64  `json:"minAmount"`
-	MaxAmount int64  `json:"maxAmount"`
-	Status    string `json:"status"`
+	Code      string `db:"code" json:"code"`
+	Name      string `db:"name" json:"name"`
+	Icon      string `db:"icon" json:"icon"`
+	IconURL   string `db:"icon_url" json:"iconUrl"`
+	Fee       int64  `db:"fee" json:"fee"`
+	MinAmount int64  `db:"min_amount" json:"minAmount"`
+	MaxAmount int64  `db:"max_amount" json:"maxAmount"`
+	Status    string `db:"status" json:"status"`
 }
 
 // VABank represents virtual account bank
 type VABank struct {
-	Code      string `json:"code"`
-	Name      string `json:"name"`
-	ShortName string `json:"shortName"`
-	Icon      string `json:"icon"`
-	IconURL   string `json:"iconUrl"`
-	Fee       int64  `json:"fee"`
-	MinAmount int64  `json:"minAmount"`
-	MaxAmount int64  `json:"maxAmount"`
-	Status    string `json:"status"`
+	Code      string `db:"code" json:"code"`
+	Name      string `db:"name" json:"name"`
+	ShortName string `db:"short_name" json:"shortName"`
+	Icon      string `db:"icon" json:"icon"`
+	IconURL   string `db:"icon_url" json:"iconUrl"`
+	Fee       int64  `db:"fee" json:"fee"`
+	MinAmount int64  `db:"min_amount" json:"minAmount"`
+	MaxAmount int64  `db:"max_amount" json:"maxAmount"`
+	Status    string `db:"status" json:"status"`
 }
 
 // CompanyBankAccount represents company's bank account for transfer
 type CompanyBankAccount struct {
-	BankCode      string `json:"bankCode"`
-	BankName      string `json:"bankName"`
-	BankShortName string `json:"bankShortName"`
-	BankIcon      string `json:"bankIcon"`
-	AccountNumber string `json:"accountNumber"`
-	AccountName   string `json:"accountName"`
-	Status        string `json:"status"`
+	BankCode      string `db:"bank_code" json:"bankCode"`
+	BankName      string `db:"bank_name" json:"bankName"`
+	BankShortName string `db:"bank_short_name" json:"bankShortName"`
+	BankIcon      string `db:"bank_icon" json:"bankIcon"`
+	AccountNumber string `db:"account_number" json:"accountNumber"`
+	AccountName   string `db:"account_name" json:"accountName"`
+	Status        string `db:"status" json:"status"`
 }
 
 // Deposit methods
