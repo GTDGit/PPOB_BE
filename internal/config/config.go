@@ -178,7 +178,7 @@ func Load() (*Config, error) {
 			ResendCooldown: time.Duration(getEnvAsInt("OTP_RESEND_COOLDOWN", 60)) * time.Second,
 		},
 		WhatsApp: WhatsAppConfig{
-			APIURL:              getEnv("WA_API_URL", "https://graph.facebook.com/v18.0"),
+			APIURL:              getEnv("WA_API_URL", "https://graph.facebook.com/v24.0"),
 			PhoneNumberID:       getEnv("WA_PHONE_NUMBER_ID", ""),
 			AccessToken:         getEnv("WA_ACCESS_TOKEN", ""),
 			OTPTemplateName:     getEnv("WA_OTP_TEMPLATE_NAME", "otp_verification"),
