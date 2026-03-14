@@ -269,7 +269,7 @@ func (h *DepositHandler) HandleWebhook(c *gin.Context) {
 	}
 
 	// Get signature from header
-	signature := c.GetHeader("X-Signature")
+	signature := getGerbangSignature(c)
 	if signature == "" {
 		respondWithError(c, domain.ErrUnauthorizedError)
 		return

@@ -113,6 +113,7 @@ func main() {
 		prepaidRepo,
 		balanceRepo,
 		userRepo,
+		productRepo,
 		gerbangClient,
 	)
 	postpaidService := service.NewPostpaidService(
@@ -120,6 +121,7 @@ func main() {
 		balanceRepo,
 		voucherRepo,
 		userRepo,
+		productRepo,
 		gerbangClient,
 	)
 	transferService := service.NewTransferService(
@@ -132,19 +134,20 @@ func main() {
 	productService := service.NewProductService(productRepo, redisClient)
 	voucherService := service.NewVoucherService(voucherRepo)
 	contactService := service.NewContactService(contactRepo, productRepo)
-	homeService := service.NewHomeService(homeRepo, userRepo, balanceRepo)
+	homeService := service.NewHomeService(homeRepo, userRepo, balanceRepo, notificationRepo)
 	userService := service.NewUserService(userRepo, balanceRepo, settingsRepo)
 	historyService := service.NewHistoryService(historyRepo)
 	notificationService := service.NewNotificationService(notificationRepo)
 	depositService := service.NewDepositService(depositRepo, balanceRepo, userRepo, gerbangClient)
 	territoryService := service.NewTerritoryService(territoryRepo)
 	kycService := service.NewKYCService(kycRepo, userRepo, gerbangClient, s3Client)
+	sandboxService := service.NewSandboxService(historyRepo, balanceRepo, depositRepo, notificationRepo)
 
 	// Initialize handlers
 	authHandler := handler.NewAuthHandler(authService)
-	prepaidHandler := handler.NewPrepaidHandler(prepaidService)
-	postpaidHandler := handler.NewPostpaidHandler(postpaidService)
-	transferHandler := handler.NewTransferHandler(transferService)
+	prepaidHandler := handler.NewPrepaidHandler(prepaidService, cfg.Gerbang.CallbackSecret)
+	postpaidHandler := handler.NewPostpaidHandler(postpaidService, cfg.Gerbang.CallbackSecret)
+	transferHandler := handler.NewTransferHandler(transferService, cfg.Gerbang.CallbackSecret)
 	productHandler := handler.NewProductHandler(productService)
 	voucherHandler := handler.NewVoucherHandler(voucherService)
 	contactHandler := handler.NewContactHandler(contactService)
@@ -155,6 +158,14 @@ func main() {
 	territoryHandler := handler.NewTerritoryHandler(territoryService)
 	kycHandler := handler.NewKYCHandler(kycService)
 	depositHandler := handler.NewDepositHandler(depositService, cfg.Gerbang.CallbackSecret)
+	sandboxHandler := handler.NewSandboxHandler(sandboxService)
+	gerbangWebhookHandler := handler.NewGerbangWebhookHandler(
+		prepaidService,
+		postpaidService,
+		transferService,
+		depositService,
+		cfg.Gerbang.CallbackSecret,
+	)
 
 	// Setup Gin
 	if cfg.App.Env == "production" {
@@ -373,6 +384,8 @@ func main() {
 		{
 			notifications.GET("", notificationHandler.List)
 			notifications.GET("/unread-count", notificationHandler.GetUnreadCount)
+			notifications.POST("/push-token", notificationHandler.RegisterPushToken)
+			notifications.DELETE("/push-token/:deviceId", notificationHandler.DeactivatePushToken)
 			notifications.GET("/:id", notificationHandler.GetDetail)
 			notifications.PUT("/:id/read", notificationHandler.MarkAsRead)
 			notifications.PUT("/read-all", notificationHandler.MarkAllAsRead)
@@ -408,6 +421,13 @@ func main() {
 			deposit.GET("/history", depositHandler.GetHistory)
 			deposit.GET("/:depositId", depositHandler.GetStatus)
 		}
+
+		sandbox := v1.Group("/sandbox")
+		sandbox.Use(middleware.JWTAuth(cfg.JWT.Secret))
+		{
+			sandbox.POST("/checkout", sandboxHandler.Checkout)
+			sandbox.POST("/deposits/:depositId/complete", sandboxHandler.CompleteDeposit)
+		}
 	}
 
 	// Internal routes (no JWT, signature verification in handler)
@@ -418,6 +438,7 @@ func main() {
 		Window: time.Minute,
 	}))
 	{
+		internal.POST("/webhook/gerbang", gerbangWebhookHandler.HandleWebhook)
 		internal.POST("/webhook/deposit", depositHandler.HandleWebhook)
 		internal.POST("/webhook/transfer", transferHandler.HandleWebhook)
 		internal.POST("/webhook/prepaid", prepaidHandler.HandleWebhook)

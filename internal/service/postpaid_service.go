@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +18,7 @@ type PostpaidService struct {
 	balanceRepo   repository.BalanceRepository
 	voucherRepo   repository.VoucherRepository
 	userRepo      repository.UserRepository
+	productRepo   repository.ProductRepository
 	gerbangClient *gerbang.Client
 }
 
@@ -26,6 +28,7 @@ func NewPostpaidService(
 	balanceRepo repository.BalanceRepository,
 	voucherRepo repository.VoucherRepository,
 	userRepo repository.UserRepository,
+	productRepo repository.ProductRepository,
 	gerbangClient *gerbang.Client,
 ) *PostpaidService {
 	return &PostpaidService{
@@ -33,6 +36,7 @@ func NewPostpaidService(
 		balanceRepo:   balanceRepo,
 		voucherRepo:   voucherRepo,
 		userRepo:      userRepo,
+		productRepo:   productRepo,
 		gerbangClient: gerbangClient,
 	}
 }
@@ -51,11 +55,12 @@ func (s *PostpaidService) Inquiry(ctx context.Context, userID, serviceType, targ
 
 	// Call Gerbang API for inquiry
 	inquiryID := fmt.Sprintf("inq_post_%s", uuid.New().String()[:12])
+	product, err := s.findPostpaidProduct(ctx, serviceType)
+	if err != nil {
+		return nil, err
+	}
 
-	// Map service type to SKU code (simplified - should get from product DB)
-	skuCode := mapServiceTypeToSKU(serviceType)
-
-	gerbangResp, err := s.gerbangClient.CreateInquiry(ctx, inquiryID, skuCode, target)
+	gerbangResp, err := s.gerbangClient.CreateInquiry(ctx, inquiryID, product.SKUCode, target)
 
 	var inquiry *domain.PostpaidInquiry
 	var customerName string
@@ -68,22 +73,20 @@ func (s *PostpaidService) Inquiry(ctx context.Context, userID, serviceType, targ
 		// Check if it's a "no bill" error
 		if gerbangErr, ok := err.(*gerbang.Error); ok && gerbangErr.Code == 404 {
 			hasBill = false
-			customerName = "Customer Name from Provider" // Mock
+			customerName = ""
 		} else {
-			// Fallback to mock for development
-			hasBill = true
-			customerName = "BUDI SANTOSO"
-			billAmount = 350000
-			adminFee = 2500
-			externalID = fmt.Sprintf("gerbang_inq_%s", uuid.New().String()[:12])
+			return nil, fmt.Errorf("provider inquiry failed: %w", err)
 		}
 	} else {
 		// Use real Gerbang response
 		hasBill = true
 		externalID = gerbangResp.TransactionID
 		customerName = gerbangResp.CustomerName
-		billAmount = gerbangResp.Price
-		adminFee = 2500 // Fixed admin fee for now
+		billAmount = gerbangResp.Amount
+		if billAmount == 0 {
+			billAmount = gerbangResp.Price
+		}
+		adminFee = gerbangResp.Admin
 	}
 
 	// Create inquiry record
@@ -95,7 +98,7 @@ func (s *PostpaidService) Inquiry(ctx context.Context, userID, serviceType, targ
 		ProviderID:   providerID,
 		CustomerID:   target,
 		CustomerName: customerName,
-		Period:       "Januari 2025", // Should come from Gerbang
+		Period:       gerbangResp.Period,
 		BillAmount:   billAmount,
 		AdminFee:     adminFee,
 		Penalty:      0,
@@ -103,6 +106,13 @@ func (s *PostpaidService) Inquiry(ctx context.Context, userID, serviceType, targ
 		HasBill:      hasBill,
 		ExpiresAt:    time.Now().Add(30 * time.Minute),
 		CreatedAt:    time.Now(),
+	}
+
+	if gerbangResp != nil && gerbangResp.TotalAmount > 0 {
+		inquiry.TotalPayment = gerbangResp.TotalAmount
+	}
+	if inquiry.Period == "" {
+		inquiry.Period = defaultPostpaidPeriod(period)
 	}
 
 	if externalID != "" {
@@ -286,52 +296,51 @@ func (s *PostpaidService) Pay(ctx context.Context, userID, inquiryID string, vou
 
 	// Call Gerbang API to pay bill
 	transactionID := fmt.Sprintf("trx_post_%s", uuid.New().String()[:12])
+	product, err := s.findPostpaidProduct(ctx, inquiry.ServiceType)
+	if err != nil {
+		return nil, err
+	}
 
 	// Get inquiry external ID for payment (from Gerbang inquiry response)
 	var inquiryExternalID string
 	if inquiry.ExternalID != nil {
 		inquiryExternalID = *inquiry.ExternalID
 	} else {
-		// If no external ID from inquiry, create a mock one
-		inquiryExternalID = fmt.Sprintf("gerbang_inq_%s", uuid.New().String()[:12])
+		return nil, domain.ErrServiceUnavailable
 	}
 
-	gerbangResp, err := s.gerbangClient.CreatePostpaidPayment(ctx, transactionID, inquiryExternalID)
+	gerbangResp, err := s.gerbangClient.CreatePostpaidPayment(ctx, transactionID, inquiryExternalID, product.SKUCode, inquiry.Target)
 
 	var externalID string
 	var serialNumber *string
 	var status string
-	var failedReason *string
 
 	if err != nil {
-		// If Gerbang call fails, rollback and return error
-		gerbangErr, ok := err.(*gerbang.Error)
-		if ok {
-			// Check if it's insufficient funds error
-			if gerbang.IsInsufficientFunds(gerbangErr) {
-				return nil, domain.ErrServiceUnavailable
-			}
-			// Other provider errors
-			reason := gerbangErr.Message
-			failedReason = &reason
-			status = domain.PostpaidStatusFailed
-		} else {
-			return nil, fmt.Errorf("provider call failed: %w", err)
-		}
+		return nil, fmt.Errorf("provider call failed: %w", err)
 	} else {
 		// Use real Gerbang response
 		externalID = gerbangResp.TransactionID
 		if gerbangResp.SerialNumber != nil {
 			serialNumber = gerbangResp.SerialNumber
 		}
-		status = domain.PostpaidStatusSuccess
+		switch gerbangResp.Status {
+		case gerbang.StatusSuccess:
+			status = domain.PostpaidStatusSuccess
+		case gerbang.StatusPending, gerbang.StatusProcessing:
+			status = domain.PostpaidStatusProcessing
+		default:
+			return nil, fmt.Errorf("provider returned unsupported postpaid status: %s", gerbangResp.Status)
+		}
 	}
 
-	// Generate reference number
-	referenceNumber := fmt.Sprintf("REF%s", time.Now().Format("20060102150405"))
+	referenceNumber := gerbangResp.TransactionID
 
 	// Create transaction record
+	var completedAt *time.Time
 	now := time.Now()
+	if status == domain.PostpaidStatusSuccess {
+		completedAt = &now
+	}
 	transaction := &domain.PostpaidTransaction{
 		ID:              transactionID,
 		UserID:          userID,
@@ -352,8 +361,7 @@ func (s *PostpaidService) Pay(ctx context.Context, userID, inquiryID string, vou
 		ReferenceNumber: referenceNumber,
 		SerialNumber:    serialNumber,
 		Status:          status,
-		FailedReason:    failedReason,
-		CompletedAt:     &now,
+		CompletedAt:     completedAt,
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
@@ -378,7 +386,10 @@ func (s *PostpaidService) Pay(ctx context.Context, userID, inquiryID string, vou
 
 // buildPayResponse builds payment response
 func (s *PostpaidService) buildPayResponse(tx *domain.PostpaidTransaction) *domain.PostpaidPayResponse {
-	completedAt := tx.CompletedAt.Format(time.RFC3339)
+	completedAt := ""
+	if tx.CompletedAt != nil {
+		completedAt = tx.CompletedAt.Format(time.RFC3339)
+	}
 
 	return &domain.PostpaidPayResponse{
 		Transaction: &domain.PostpaidTransactionInfo{
@@ -410,8 +421,8 @@ func (s *PostpaidService) buildPayResponse(tx *domain.PostpaidTransaction) *doma
 			SerialNumber:    tx.SerialNumber,
 		},
 		Message: &domain.PostpaidMessageInfo{
-			Title:    fmt.Sprintf("Pembayaran %s Berhasil", getServiceDisplayName(tx.ServiceType)),
-			Subtitle: fmt.Sprintf("Tagihan %s periode %s telah dibayar", getServiceDisplayName(tx.ServiceType), tx.Period),
+			Title:    getPostpaidStatusTitle(tx.ServiceType, tx.Status),
+			Subtitle: getPostpaidStatusSubtitle(tx.ServiceType, tx.Status, tx.Period),
 		},
 	}
 }
@@ -468,30 +479,6 @@ func validatePostpaidTarget(serviceType, target string) error {
 	return nil
 }
 
-func mapServiceTypeToSKU(serviceType string) string {
-	// Simplified mapping - should query product DB in real implementation
-	switch serviceType {
-	case domain.ServicePLNPostpaid:
-		return "PLN_POST"
-	case domain.ServicePhonePostpaid:
-		return "PHONE_POST"
-	case domain.ServicePDAM:
-		return "PDAM"
-	case domain.ServiceBPJS:
-		return "BPJS"
-	case domain.ServiceTelkom:
-		return "TELKOM"
-	case domain.ServicePGN:
-		return "PGN"
-	case domain.ServicePBB:
-		return "PBB"
-	case domain.ServiceTVCable:
-		return "TV_CABLE"
-	default:
-		return "UNKNOWN"
-	}
-}
-
 func getServiceDisplayName(serviceType string) string {
 	switch serviceType {
 	case domain.ServicePLNPostpaid:
@@ -513,6 +500,98 @@ func getServiceDisplayName(serviceType string) string {
 	default:
 		return "Tagihan"
 	}
+}
+
+func (s *PostpaidService) findPostpaidProduct(ctx context.Context, serviceType string) (*domain.Product, error) {
+	isActive := true
+	filter := repository.ProductFilter{
+		Type:     domain.ProductTypePostpaid,
+		IsActive: &isActive,
+		Page:     1,
+		PerPage:  50,
+	}
+
+	switch serviceType {
+	case domain.ServicePLNPostpaid:
+		filter.Category = domain.CategoryPLN
+	case domain.ServicePDAM:
+		filter.Category = domain.CategoryPDAM
+	case domain.ServiceBPJS:
+		filter.Category = domain.CategoryBPJS
+	case domain.ServiceTelkom:
+		filter.Category = domain.CategoryTelkom
+	case domain.ServiceTVCable:
+		filter.Category = domain.CategoryTV
+	case domain.ServicePhonePostpaid:
+		filter.Search = "pascabayar"
+	case domain.ServicePGN:
+		filter.Search = "PGN"
+	case domain.ServicePBB:
+		filter.Search = "PBB"
+	}
+
+	products, err := s.productRepo.FindAll(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load postpaid products: %w", err)
+	}
+	for _, product := range products {
+		if postpaidProductMatchesService(product, serviceType) {
+			return product, nil
+		}
+	}
+
+	return nil, domain.ErrInvalidProduct
+}
+
+func postpaidProductMatchesService(product *domain.Product, serviceType string) bool {
+	if product == nil || product.Type != domain.ProductTypePostpaid {
+		return false
+	}
+
+	switch serviceType {
+	case domain.ServicePLNPostpaid:
+		return strings.EqualFold(product.Category, domain.CategoryPLN)
+	case domain.ServicePDAM:
+		return strings.EqualFold(product.Category, domain.CategoryPDAM)
+	case domain.ServiceBPJS:
+		return strings.EqualFold(product.Category, domain.CategoryBPJS)
+	case domain.ServiceTelkom:
+		return strings.EqualFold(product.Category, domain.CategoryTelkom)
+	case domain.ServiceTVCable:
+		return strings.EqualFold(product.Category, domain.CategoryTV)
+	case domain.ServicePhonePostpaid:
+		return strings.Contains(strings.ToLower(product.Name), "pascabayar")
+	case domain.ServicePGN:
+		return strings.Contains(strings.ToLower(product.Name), "pgn")
+	case domain.ServicePBB:
+		return strings.Contains(strings.ToLower(product.Name), "pbb")
+	default:
+		return false
+	}
+}
+
+func defaultPostpaidPeriod(period *string) string {
+	if period != nil && *period != "" {
+		return *period
+	}
+	return time.Now().Format("January 2006")
+}
+
+func getPostpaidStatusTitle(serviceType, status string) string {
+	if status == domain.PostpaidStatusSuccess {
+		return fmt.Sprintf("Pembayaran %s Berhasil", getServiceDisplayName(serviceType))
+	}
+	return "Pembayaran Sedang Diproses"
+}
+
+func getPostpaidStatusSubtitle(serviceType, status, period string) string {
+	if period == "" {
+		period = "berjalan"
+	}
+	if status == domain.PostpaidStatusSuccess {
+		return fmt.Sprintf("Tagihan %s periode %s telah dibayar", getServiceDisplayName(serviceType), period)
+	}
+	return fmt.Sprintf("Tagihan %s periode %s sedang diproses", getServiceDisplayName(serviceType), period)
 }
 
 // Refund restores balance for failed/cancelled transaction
@@ -562,6 +641,64 @@ func (s *PostpaidService) Refund(ctx context.Context, transactionID, reason stri
 	}
 
 	// TODO: Create balance history record when balance_history table is ready
+
+	return tx.Commit()
+}
+
+// HandleWebhook handles postpaid transaction webhook notification from Gerbang API.
+func (s *PostpaidService) HandleWebhook(ctx context.Context, webhookData *gerbang.TransactionWebhookData) error {
+	transaction, err := s.postpaidRepo.FindTransactionByID(ctx, webhookData.ReferenceID)
+	if err != nil {
+		return fmt.Errorf("failed to find transaction: %w", err)
+	}
+	if transaction == nil {
+		return domain.ErrNotFound("Transaksi postpaid")
+	}
+	if transaction.Status == domain.PostpaidStatusSuccess || transaction.Status == domain.PostpaidStatusFailed {
+		return nil
+	}
+
+	tx, err := s.postpaidRepo.BeginTx(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	now := time.Now()
+	newStatus := domain.PostpaidStatusProcessing
+	refundNeeded := false
+
+	switch webhookData.Status {
+	case "Success":
+		newStatus = domain.PostpaidStatusSuccess
+	case "Failed":
+		newStatus = domain.PostpaidStatusFailed
+		refundNeeded = true
+	case "Pending":
+		newStatus = domain.PostpaidStatusProcessing
+	default:
+		return fmt.Errorf("unknown transaction status: %s", webhookData.Status)
+	}
+
+	if err := s.postpaidRepo.UpdateTransactionStatusWithTx(ctx, tx, transaction.ID, newStatus); err != nil {
+		return fmt.Errorf("failed to update transaction status: %w", err)
+	}
+
+	if refundNeeded {
+		balance, err := s.balanceRepo.FindByUserIDForUpdate(ctx, tx, transaction.UserID)
+		if err != nil {
+			return fmt.Errorf("failed to get balance: %w", err)
+		}
+		if balance == nil {
+			return domain.ErrNotFound("Saldo")
+		}
+
+		balance.Amount += transaction.TotalPayment
+		balance.UpdatedAt = now
+		if err := s.balanceRepo.UpdateWithTx(ctx, tx, balance); err != nil {
+			return fmt.Errorf("failed to restore balance: %w", err)
+		}
+	}
 
 	return tx.Commit()
 }

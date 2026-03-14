@@ -3,6 +3,9 @@ package service
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,10 +20,8 @@ type PrepaidService struct {
 	prepaidRepo   repository.PrepaidRepository
 	balanceRepo   repository.BalanceRepository
 	userRepo      repository.UserRepository
+	productRepo   repository.ProductRepository
 	gerbangClient *gerbang.Client
-	// TODO: Add when implemented
-	// productRepo  repository.ProductRepository
-	// voucherRepo  repository.VoucherRepository
 }
 
 // NewPrepaidService creates a new prepaid service
@@ -28,12 +29,14 @@ func NewPrepaidService(
 	prepaidRepo repository.PrepaidRepository,
 	balanceRepo repository.BalanceRepository,
 	userRepo repository.UserRepository,
+	productRepo repository.ProductRepository,
 	gerbangClient *gerbang.Client,
 ) *PrepaidService {
 	return &PrepaidService{
 		prepaidRepo:   prepaidRepo,
 		balanceRepo:   balanceRepo,
 		userRepo:      userRepo,
+		productRepo:   productRepo,
 		gerbangClient: gerbangClient,
 	}
 }
@@ -65,8 +68,12 @@ func (s *PrepaidService) Inquiry(ctx context.Context, req InquiryRequest) (*doma
 		operatorID = &operator
 	}
 
-	// TODO: Call provider to validate target
-	targetValid := true // Mock for now
+	products, err := s.getProductsForService(ctx, req.ServiceType, operatorID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load products: %w", err)
+	}
+
+	targetValid := true
 
 	// Create inquiry record
 	inquiryID := "inq_" + uuid.New().String()[:8]
@@ -93,7 +100,7 @@ func (s *PrepaidService) Inquiry(ctx context.Context, req InquiryRequest) (*doma
 			Target:      req.Target,
 			TargetValid: targetValid,
 		},
-		Products: getMockProducts(req.ServiceType), // TODO: Replace with real product fetch
+		Products: products,
 		Notices:  []*domain.NoticeInfo{},
 	}
 
@@ -141,15 +148,20 @@ func (s *PrepaidService) CreateOrder(ctx context.Context, req CreateOrderRequest
 		return nil, domain.ErrValidationFailed("Inquiry does not belong to user")
 	}
 
-	// TODO: Get product from repository
-	product := getMockProduct(req.ProductID)
+	product, err := s.productRepo.FindByID(ctx, req.ProductID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get product: %w", err)
+	}
 	if product == nil {
+		return nil, domain.ErrInvalidProduct
+	}
+	if !product.IsActive || product.Type != domain.ProductTypePrepaid || !prepaidProductMatchesService(product, inquiry.ServiceType) {
 		return nil, domain.ErrInvalidProduct
 	}
 
 	// Calculate pricing
 	productPrice := product.Price
-	adminFee := product.AdminFee
+	adminFee := product.Admin
 	subtotal := productPrice + adminFee
 	totalDiscount := int64(0) // TODO: Apply vouchers
 	totalPayment := subtotal - totalDiscount
@@ -206,7 +218,7 @@ func (s *PrepaidService) CreateOrder(ctx context.Context, req CreateOrderRequest
 			ID:          product.ID,
 			Name:        product.Name,
 			Description: product.Description,
-			Nominal:     product.Nominal,
+			Nominal:     inferNominalFromProduct(product),
 		},
 		Target: &domain.OrderTargetInfo{
 			Number: inquiry.Target,
@@ -346,24 +358,40 @@ func (s *PrepaidService) Pay(ctx context.Context, req PayRequest) (*domain.Prepa
 	}
 	balanceAfter = balance.Amount
 
-	// Call Gerbang API to execute prepaid transaction
-	// TODO: Get product SKU code from order (for now using mock)
-	productSKU := "MOCK_SKU_" + order.ProductID
-	referenceNumber = "PPOB" + transactionID
-
-	gerbangResp, err := s.gerbangClient.CreatePrepaidTransaction(ctx, referenceNumber, productSKU, order.Target)
+	product, err := s.productRepo.FindByID(ctx, order.ProductID)
 	if err != nil {
-		// Log error but continue with mock response for now (development mode)
-		// In production, this should fail and rollback
-		serialNumber = "SN" + uuid.New().String()[:10]
-		referenceNumber = "REF" + time.Now().Format("20060102150405")
-	} else {
-		// Use actual response from Gerbang
-		if gerbangResp.SerialNumber != nil {
-			serialNumber = *gerbangResp.SerialNumber
-		}
-		referenceNumber = gerbangResp.TransactionID
+		return nil, fmt.Errorf("failed to get product: %w", err)
 	}
+	if product == nil || !product.IsActive {
+		return nil, domain.ErrInvalidProduct
+	}
+
+	gerbangResp, err := s.gerbangClient.CreatePrepaidTransaction(ctx, order.ID, product.SKUCode, order.Target)
+	if err != nil {
+		return nil, fmt.Errorf("provider call failed: %w", err)
+	}
+
+	transactionStatus := domain.TransactionProcessing
+	orderStatus := domain.OrderProcessing
+	var completedAt *time.Time
+
+	switch gerbangResp.Status {
+	case gerbang.StatusSuccess:
+		transactionStatus = domain.TransactionSuccess
+		orderStatus = domain.OrderSuccess
+		now := time.Now()
+		completedAt = &now
+	case gerbang.StatusProcessing, gerbang.StatusPending:
+		transactionStatus = domain.TransactionProcessing
+		orderStatus = domain.OrderProcessing
+	default:
+		return nil, fmt.Errorf("provider returned unsupported prepaid status: %s", gerbangResp.Status)
+	}
+
+	if gerbangResp.SerialNumber != nil {
+		serialNumber = *gerbangResp.SerialNumber
+	}
+	referenceNumber = gerbangResp.TransactionID
 
 	// Generate PLN-specific fields if applicable
 	if order.ServiceType == domain.ServicePLNPrepaid {
@@ -381,35 +409,29 @@ func (s *PrepaidService) Pay(ctx context.Context, req PayRequest) (*domain.Prepa
 			}
 		}
 
-		// Fallback to mock if not in response
-		if token == nil {
-			tokenStr := generatePLNToken()
-			token = &tokenStr
-		}
-		if kwh == nil {
-			kwhStr := calculateKWH(order.TotalPayment)
-			kwh = &kwhStr
-		}
 	}
 
-	// Create transaction record within DB transaction
-	completedAt := time.Now()
+	var serialNumberPtr *string
+	if serialNumber != "" {
+		serialNumberPtr = &serialNumber
+	}
+
 	transaction := &domain.PrepaidTransaction{
 		ID:              transactionID,
 		UserID:          req.UserID,
 		OrderID:         req.OrderID,
-		Status:          domain.TransactionSuccess,
+		Status:          transactionStatus,
 		ServiceType:     order.ServiceType,
 		Target:          order.Target,
 		ProductID:       order.ProductID,
 		TotalPayment:    order.TotalPayment,
 		BalanceBefore:   balanceBefore,
 		BalanceAfter:    balanceAfter,
-		SerialNumber:    &serialNumber,
+		SerialNumber:    serialNumberPtr,
 		ReferenceNumber: &referenceNumber,
 		Token:           token,
 		KWH:             kwh,
-		CompletedAt:     &completedAt,
+		CompletedAt:     completedAt,
 		CreatedAt:       time.Now(),
 		UpdatedAt:       time.Now(),
 	}
@@ -419,7 +441,7 @@ func (s *PrepaidService) Pay(ctx context.Context, req PayRequest) (*domain.Prepa
 	}
 
 	// Update order status within transaction
-	if err := s.prepaidRepo.UpdateOrderStatusWithTx(ctx, tx, req.OrderID, domain.OrderSuccess); err != nil {
+	if err := s.prepaidRepo.UpdateOrderStatusWithTx(ctx, tx, req.OrderID, orderStatus); err != nil {
 		return nil, fmt.Errorf("failed to update order status: %w", err)
 	}
 
@@ -428,23 +450,25 @@ func (s *PrepaidService) Pay(ctx context.Context, req PayRequest) (*domain.Prepa
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	// TODO: Get product details
-	product := getMockProduct(order.ProductID)
-
 	// Build response
-	completedAtStr := completedAt.Format(time.RFC3339)
+	productInfo := convertProductToInfo(product)
+	var completedAtStr *string
+	if transaction.CompletedAt != nil {
+		formatted := transaction.CompletedAt.Format(time.RFC3339)
+		completedAtStr = &formatted
+	}
 	response := &domain.PrepaidPayResponse{
 		Transaction: &domain.TransactionInfo{
 			TransactionID: transactionID,
 			OrderID:       req.OrderID,
-			Status:        domain.TransactionSuccess,
+			Status:        transactionStatus,
 			ServiceType:   order.ServiceType,
-			CompletedAt:   &completedAtStr,
+			CompletedAt:   completedAtStr,
 		},
 		Product: &domain.TransactionProductInfo{
-			ID:      product.ID,
-			Name:    product.Name,
-			Nominal: product.Nominal,
+			ID:      productInfo.ID,
+			Name:    productInfo.Name,
+			Nominal: productInfo.Nominal,
 		},
 		Target: &domain.TransactionTargetInfo{
 			Number: order.Target,
@@ -457,14 +481,14 @@ func (s *PrepaidService) Pay(ctx context.Context, req PayRequest) (*domain.Prepa
 			BalanceAfterFormatted: formatCurrency(balanceAfter),
 		},
 		Receipt: &domain.ReceiptInfo{
-			SerialNumber:    &serialNumber,
+			SerialNumber:    serialNumberPtr,
 			ReferenceNumber: &referenceNumber,
 			Token:           token,
 			KWH:             kwh,
 		},
 		Message: &domain.MessageInfo{
-			Title:    getSuccessTitle(order.ServiceType),
-			Subtitle: getSuccessSubtitle(order.ServiceType, order.TotalPayment),
+			Title:    getPrepaidStatusTitle(order.ServiceType, transactionStatus),
+			Subtitle: getPrepaidStatusSubtitle(order.ServiceType, transactionStatus, order.TotalPayment),
 		},
 	}
 
@@ -615,66 +639,150 @@ func calculateKWH(amount int64) string {
 	return fmt.Sprintf("%.1f kWh", kwh)
 }
 
-func getMockProducts(serviceType string) []*domain.ProductInfo {
-	// TODO: Replace with actual product fetch
-	return []*domain.ProductInfo{
-		{
-			ID:             "prd_pulsa_5k",
-			Name:           "Pulsa 5.000",
-			Description:    "Masa Aktif 7 Hari",
-			Category:       serviceType,
-			Nominal:        5000,
-			Price:          5000,
-			PriceFormatted: "Rp5.000",
-			AdminFee:       0,
-			Discount:       nil,
-			Status:         "active",
-			Stock:          "available",
-		},
-		{
-			ID:             "prd_pulsa_10k",
-			Name:           "Pulsa 10.000",
-			Description:    "Masa Aktif 7 Hari",
-			Category:       serviceType,
-			Nominal:        10000,
-			Price:          10000,
-			PriceFormatted: "Rp10.000",
-			AdminFee:       0,
-			Discount:       nil,
-			Status:         "active",
-			Stock:          "available",
-		},
+func (s *PrepaidService) getProductsForService(ctx context.Context, serviceType string, operatorID *string) ([]*domain.ProductInfo, error) {
+	isActive := true
+	filter := repository.ProductFilter{
+		Type:     domain.ProductTypePrepaid,
+		IsActive: &isActive,
+		Page:     1,
+		PerPage:  100,
+	}
+
+	switch serviceType {
+	case domain.ServicePulsa:
+		filter.Category = domain.CategoryPulsa
+	case domain.ServiceData:
+		filter.Category = domain.CategoryData
+	case domain.ServicePLNPrepaid:
+		filter.Category = domain.CategoryPLNToken
+	case domain.ServiceEwallet:
+		filter.Category = domain.CategoryEwallet
+	case domain.ServiceGame:
+		filter.Category = domain.CategoryGame
+	}
+
+	if operatorID != nil {
+		filter.Brand = operatorIDToBrand(*operatorID)
+	}
+
+	products, err := s.productRepo.FindAll(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	if len(products) == 0 && serviceType == domain.ServicePLNPrepaid {
+		filter.Category = domain.CategoryPLN
+		products, err = s.productRepo.FindAll(ctx, filter)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	result := make([]*domain.ProductInfo, 0, len(products))
+	for _, product := range products {
+		if prepaidProductMatchesService(product, serviceType) {
+			result = append(result, convertProductToInfo(product))
+		}
+	}
+
+	return result, nil
+}
+
+func convertProductToInfo(product *domain.Product) *domain.ProductInfo {
+	totalPrice := product.Price + product.Admin
+	adminFeeFormatted := formatCurrency(product.Admin)
+	totalPriceFormatted := formatCurrency(totalPrice)
+
+	return &domain.ProductInfo{
+		ID:                  product.ID,
+		Name:                product.Name,
+		Description:         product.Description,
+		Category:            product.Category,
+		Nominal:             inferNominalFromProduct(product),
+		Price:               product.Price,
+		PriceFormatted:      formatCurrency(product.Price),
+		AdminFee:            product.Admin,
+		AdminFeeFormatted:   &adminFeeFormatted,
+		TotalPrice:          &totalPrice,
+		TotalPriceFormatted: &totalPriceFormatted,
+		Status:              mapProductStatus(product.IsActive),
+		Stock:               mapProductStock(product.IsActive),
 	}
 }
 
-func getMockProduct(productID string) *domain.ProductInfo {
-	products := map[string]*domain.ProductInfo{
-		"prd_pulsa_5k": {
-			ID:             "prd_pulsa_5k",
-			Name:           "Pulsa 5.000",
-			Description:    "Masa Aktif 7 Hari",
-			Category:       domain.ServicePulsa,
-			Nominal:        5000,
-			Price:          5000,
-			PriceFormatted: "Rp5.000",
-			AdminFee:       0,
-			Status:         "active",
-			Stock:          "available",
-		},
-		"prd_pulsa_10k": {
-			ID:             "prd_pulsa_10k",
-			Name:           "Pulsa 10.000",
-			Description:    "Masa Aktif 7 Hari",
-			Category:       domain.ServicePulsa,
-			Nominal:        10000,
-			Price:          10000,
-			PriceFormatted: "Rp10.000",
-			AdminFee:       0,
-			Status:         "active",
-			Stock:          "available",
-		},
+func prepaidProductMatchesService(product *domain.Product, serviceType string) bool {
+	if product == nil || product.Type != domain.ProductTypePrepaid {
+		return false
 	}
-	return products[productID]
+
+	switch serviceType {
+	case domain.ServicePulsa:
+		return strings.EqualFold(product.Category, domain.CategoryPulsa)
+	case domain.ServiceData:
+		return strings.EqualFold(product.Category, domain.CategoryData)
+	case domain.ServicePLNPrepaid:
+		return strings.EqualFold(product.Category, domain.CategoryPLNToken) || strings.EqualFold(product.Category, domain.CategoryPLN)
+	case domain.ServiceEwallet:
+		return strings.EqualFold(product.Category, domain.CategoryEwallet)
+	case domain.ServiceGame:
+		return strings.EqualFold(product.Category, domain.CategoryGame)
+	default:
+		return false
+	}
+}
+
+func operatorIDToBrand(operatorID string) string {
+	switch operatorID {
+	case "telkomsel":
+		return "TELKOMSEL"
+	case "indosat":
+		return "INDOSAT"
+	case "xl":
+		return "XL"
+	case "axis":
+		return "AXIS"
+	case "three":
+		return "TRI"
+	case "smartfren":
+		return "SMARTFREN"
+	case "byu":
+		return "BYU"
+	default:
+		return ""
+	}
+}
+
+func inferNominalFromProduct(product *domain.Product) int64 {
+	if product == nil {
+		return 0
+	}
+
+	re := regexp.MustCompile(`\d[\d\.]*`)
+	for _, source := range []string{product.Name, product.Description} {
+		match := re.FindString(source)
+		if match == "" {
+			continue
+		}
+		value, err := strconv.ParseInt(strings.ReplaceAll(match, ".", ""), 10, 64)
+		if err == nil && value > 0 {
+			return value
+		}
+	}
+
+	return product.Price
+}
+
+func mapProductStatus(isActive bool) string {
+	if isActive {
+		return "active"
+	}
+	return "inactive"
+}
+
+func mapProductStock(isActive bool) string {
+	if isActive {
+		return "available"
+	}
+	return "unavailable"
 }
 
 func formatCurrency(amount int64) string {
@@ -715,6 +823,20 @@ func getSuccessTitle(serviceType string) string {
 
 func getSuccessSubtitle(serviceType string, amount int64) string {
 	return fmt.Sprintf("Total pembayaran %s, lihat rincian riwayat untuk informasi lebih lengkap", formatCurrency(amount))
+}
+
+func getPrepaidStatusTitle(serviceType, status string) string {
+	if status == domain.TransactionSuccess {
+		return getSuccessTitle(serviceType)
+	}
+	return "Transaksi Sedang Diproses"
+}
+
+func getPrepaidStatusSubtitle(serviceType, status string, amount int64) string {
+	if status == domain.TransactionSuccess {
+		return getSuccessSubtitle(serviceType, amount)
+	}
+	return fmt.Sprintf("Pembayaran %s sudah diterima dan sedang diproses", formatCurrency(amount))
 }
 
 // Refund restores balance for failed/cancelled transaction
@@ -782,8 +904,16 @@ func (s *PrepaidService) HandleWebhook(ctx context.Context, webhookData *gerbang
 
 	// Check if already processed - return nil for idempotency
 	// This ensures webhook sender gets 200 OK and won't retry forever
-	if order.Status == domain.TransactionSuccess || order.Status == domain.TransactionFailed {
+	if order.Status == domain.OrderSuccess || order.Status == domain.OrderFailed {
 		return nil // Idempotent: already processed
+	}
+
+	transaction, err := s.prepaidRepo.FindTransactionByOrderID(ctx, order.ID)
+	if err != nil {
+		return fmt.Errorf("failed to find transaction: %w", err)
+	}
+	if transaction == nil {
+		return domain.ErrNotFound("Transaksi prepaid")
 	}
 
 	// Begin database transaction for atomic operation
@@ -800,17 +930,15 @@ func (s *PrepaidService) HandleWebhook(ctx context.Context, webhookData *gerbang
 
 	switch webhookData.Status {
 	case "Success":
-		newStatus = domain.TransactionSuccess
+		newStatus = domain.OrderSuccess
 		refundNeeded = false
-		// Serial number is stored in PrepaidTransaction, not PrepaidOrder
-		// Will be handled when updating transaction record
 
 	case "Failed":
-		newStatus = domain.TransactionFailed
+		newStatus = domain.OrderFailed
 		refundNeeded = true
 
 	case "Pending":
-		newStatus = domain.TransactionProcessing // Use existing constant
+		newStatus = domain.OrderProcessing
 		refundNeeded = false
 
 	default:
@@ -825,6 +953,17 @@ func (s *PrepaidService) HandleWebhook(ctx context.Context, webhookData *gerbang
 		return fmt.Errorf("failed to update order status: %w", err)
 	}
 
+	transactionStatus := domain.TransactionProcessing
+	switch newStatus {
+	case domain.OrderSuccess:
+		transactionStatus = domain.TransactionSuccess
+	case domain.OrderFailed:
+		transactionStatus = domain.TransactionFailed
+	}
+	if err := s.prepaidRepo.UpdateTransactionStatusWithTx(ctx, tx, transaction.ID, transactionStatus); err != nil {
+		return fmt.Errorf("failed to update transaction status: %w", err)
+	}
+
 	// If transaction failed, refund balance to user
 	if refundNeeded {
 		// Lock and get user balance
@@ -837,7 +976,7 @@ func (s *PrepaidService) HandleWebhook(ctx context.Context, webhookData *gerbang
 		}
 
 		// Restore balance
-		balance.Amount += order.TotalPayment
+		balance.Amount += transaction.TotalPayment
 		balance.UpdatedAt = now
 
 		if err := s.balanceRepo.UpdateWithTx(ctx, tx, balance); err != nil {

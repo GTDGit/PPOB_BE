@@ -167,10 +167,7 @@ func (s *DepositService) CreateQRIS(ctx context.Context, userID string, amount i
 	var qrisImageURL string
 
 	if err != nil {
-		// Fallback to mock for development
-		externalID = fmt.Sprintf("gerbang_qris_%s", uuid.New().String()[:12])
-		qrisString = fmt.Sprintf("00020101021226670016COM.GERBANGAPI01189360050300000870303UMI51440014ID.CO.QRIS.WWW0215ID%s520454995303360540%d5802ID5913PT PPOB ID6007Jakarta610512345", externalID, totalAmount)
-		qrisImageURL = fmt.Sprintf("https://api.gerbang.id/qris/image/%s", externalID)
+		return nil, fmt.Errorf("failed to create QRIS payment via Gerbang: %w", err)
 	} else {
 		// Use real Gerbang response
 		externalID = gerbangResp.PaymentID
@@ -297,9 +294,7 @@ func (s *DepositService) CreateRetail(ctx context.Context, userID, providerCode 
 	var paymentCode string
 
 	if err != nil {
-		// Fallback to mock for development
-		externalID = fmt.Sprintf("gerbang_retail_%s", uuid.New().String()[:12])
-		paymentCode = fmt.Sprintf("PPOB%d", time.Now().Unix()%100000000)
+		return nil, fmt.Errorf("failed to create retail payment via Gerbang: %w", err)
 	} else {
 		// Use real Gerbang response
 		externalID = gerbangResp.PaymentID
@@ -427,9 +422,7 @@ func (s *DepositService) CreateVA(ctx context.Context, userID, bankCode string, 
 	var vaNumber string
 
 	if err != nil {
-		// Fallback to mock for development
-		externalID = fmt.Sprintf("gerbang_va_%s", uuid.New().String()[:12])
-		vaNumber = fmt.Sprintf("8808%d", time.Now().Unix()%1000000000)
+		return nil, fmt.Errorf("failed to create VA payment via Gerbang: %w", err)
 	} else {
 		// Use real Gerbang response
 		externalID = gerbangResp.PaymentID
@@ -572,8 +565,8 @@ func (s *DepositService) HandleWebhook(ctx context.Context, referenceID string) 
 	}
 	defer tx.Rollback()
 
-	// Find deposit by ID (reference ID = deposit ID) with row lock
-	deposit, err := s.depositRepo.FindByUserAndID(ctx, "", referenceID)
+	// Find deposit by ID (reference ID = deposit ID)
+	deposit, err := s.depositRepo.FindByID(ctx, referenceID)
 	if err != nil {
 		return fmt.Errorf("failed to find deposit: %w", err)
 	}

@@ -15,12 +15,14 @@ import (
 // PostpaidHandler handles postpaid requests
 type PostpaidHandler struct {
 	postpaidService *service.PostpaidService
+	callbackSecret  string
 }
 
 // NewPostpaidHandler creates a new postpaid handler
-func NewPostpaidHandler(postpaidService *service.PostpaidService) *PostpaidHandler {
+func NewPostpaidHandler(postpaidService *service.PostpaidService, callbackSecret string) *PostpaidHandler {
 	return &PostpaidHandler{
 		postpaidService: postpaidService,
+		callbackSecret:  callbackSecret,
 	}
 }
 
@@ -123,9 +125,15 @@ func (h *PostpaidHandler) HandleWebhook(c *gin.Context) {
 	}
 
 	// Get signature from header
-	signature := c.GetHeader("X-Callback-Signature")
+	signature := getGerbangSignature(c)
 	if signature == "" {
 		slog.Error("webhook signature missing")
+		respondWithError(c, domain.NewError(domain.CodeUnauthorized, "Signature tidak valid", 401))
+		return
+	}
+
+	if h.callbackSecret != "" && !gerbang.VerifySignature(rawBody, signature, h.callbackSecret) {
+		slog.Error("webhook signature mismatch")
 		respondWithError(c, domain.NewError(domain.CodeUnauthorized, "Signature tidak valid", 401))
 		return
 	}
@@ -161,9 +169,14 @@ func (h *PostpaidHandler) HandleWebhook(c *gin.Context) {
 		slog.String("status", transactionData.Status),
 	)
 
-	// Note: Postpaid service HandleWebhook method will be similar to prepaid
-	// For now, just acknowledge webhook
-	slog.Info("postpaid webhook processing skipped - service method not yet implemented")
+	if err := h.postpaidService.HandleWebhook(c.Request.Context(), transactionData); err != nil {
+		slog.Error("failed to process postpaid webhook",
+			slog.String("reference_id", transactionData.ReferenceID),
+			slog.String("error", err.Error()),
+		)
+		handleServiceError(c, err)
+		return
+	}
 
 	// Return 200 OK immediately to acknowledge webhook
 	respondWithSuccess(c, http.StatusOK, gin.H{

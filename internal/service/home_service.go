@@ -11,9 +11,10 @@ import (
 
 // HomeService handles home screen business logic
 type HomeService struct {
-	homeRepo    repository.HomeRepository
-	userRepo    repository.UserRepository
-	balanceRepo repository.BalanceRepository
+	homeRepo         repository.HomeRepository
+	userRepo         repository.UserRepository
+	balanceRepo      repository.BalanceRepository
+	notificationRepo repository.NotificationRepository
 }
 
 // NewHomeService creates a new home service
@@ -21,11 +22,13 @@ func NewHomeService(
 	homeRepo repository.HomeRepository,
 	userRepo repository.UserRepository,
 	balanceRepo repository.BalanceRepository,
+	notificationRepo repository.NotificationRepository,
 ) *HomeService {
 	return &HomeService{
-		homeRepo:    homeRepo,
-		userRepo:    userRepo,
-		balanceRepo: balanceRepo,
+		homeRepo:         homeRepo,
+		userRepo:         userRepo,
+		balanceRepo:      balanceRepo,
+		notificationRepo: notificationRepo,
 	}
 }
 
@@ -94,9 +97,13 @@ func (s *HomeService) GetHome(ctx context.Context, userID string, servicesVersio
 		}
 	}
 
-	// Build notifications info (placeholder)
+	unreadCount, err := s.notificationRepo.CountUnread(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get unread notifications: %w", err)
+	}
+
 	notificationsInfo := &domain.HomeNotificationsInfo{
-		UnreadCount: 0, // TODO: Implement notification count
+		UnreadCount: unreadCount,
 	}
 
 	return &domain.HomeResponse{

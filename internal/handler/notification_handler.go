@@ -28,6 +28,13 @@ type MarkAllAsReadRequest struct {
 	Category *string `json:"category"`
 }
 
+// RegisterPushTokenRequest represents push token registration.
+type RegisterPushTokenRequest struct {
+	DeviceID string `json:"deviceId" binding:"required"`
+	Token    string `json:"token" binding:"required"`
+	Platform string `json:"platform" binding:"required,oneof=android ios web"`
+}
+
 // List handles GET /v1/notifications
 // Returns paginated notification list
 func (h *NotificationHandler) List(c *gin.Context) {
@@ -200,6 +207,52 @@ func (h *NotificationHandler) Delete(c *gin.Context) {
 
 	// Call service
 	response, err := h.notificationService.Delete(c.Request.Context(), userID, notificationID)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	respondWithSuccess(c, http.StatusOK, response)
+}
+
+// RegisterPushToken handles POST /v1/notifications/push-token.
+func (h *NotificationHandler) RegisterPushToken(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == "" {
+		respondWithError(c, domain.ErrUnauthorizedError)
+		return
+	}
+
+	var req RegisterPushTokenRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondWithError(c, domain.ErrValidationFailed("Body request tidak valid"))
+		return
+	}
+
+	response, err := h.notificationService.RegisterPushToken(c.Request.Context(), userID, req.DeviceID, req.Token, req.Platform)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+
+	respondWithSuccess(c, http.StatusOK, response)
+}
+
+// DeactivatePushToken handles DELETE /v1/notifications/push-token/:deviceId.
+func (h *NotificationHandler) DeactivatePushToken(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == "" {
+		respondWithError(c, domain.ErrUnauthorizedError)
+		return
+	}
+
+	deviceID := c.Param("deviceId")
+	if deviceID == "" {
+		respondWithError(c, domain.ErrValidationFailed("ID perangkat wajib diisi"))
+		return
+	}
+
+	response, err := h.notificationService.DeactivatePushToken(c.Request.Context(), userID, deviceID)
 	if err != nil {
 		handleServiceError(c, err)
 		return

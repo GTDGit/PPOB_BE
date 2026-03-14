@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -112,6 +113,9 @@ func (r *depositRepository) FindByID(ctx context.Context, id string) (*domain.De
 	var deposit domain.Deposit
 	err := r.db.GetContext(ctx, &deposit, query, id)
 	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
 		return nil, err
 	}
 
@@ -121,10 +125,19 @@ func (r *depositRepository) FindByID(ctx context.Context, id string) (*domain.De
 // FindByUserAndID finds a deposit by user ID and deposit ID (ownership validation)
 func (r *depositRepository) FindByUserAndID(ctx context.Context, userID, id string) (*domain.Deposit, error) {
 	query := `SELECT ` + depositColumns + ` FROM deposits WHERE id = $1 AND user_id = $2`
+	args := []interface{}{id, userID}
+
+	if userID == "" {
+		query = `SELECT ` + depositColumns + ` FROM deposits WHERE id = $1`
+		args = []interface{}{id}
+	}
 
 	var deposit domain.Deposit
-	err := r.db.GetContext(ctx, &deposit, query, id, userID)
+	err := r.db.GetContext(ctx, &deposit, query, args...)
 	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
 		return nil, err
 	}
 
@@ -193,16 +206,24 @@ func (r *depositRepository) FindByUserID(ctx context.Context, userID string, fil
 
 // UpdateStatus updates deposit status
 func (r *depositRepository) UpdateStatus(ctx context.Context, id, status string, paidAt *time.Time) error {
-	// In production, update database
-	// For now, just return success
-	return nil
+	query := `
+		UPDATE deposits
+		SET status = $1, paid_at = $2, updated_at = NOW()
+		WHERE id = $3
+	`
+	_, err := r.db.ExecContext(ctx, query, status, paidAt, id)
+	return err
 }
 
 // UpdateStatusWithTx updates deposit status within a transaction
 func (r *depositRepository) UpdateStatusWithTx(ctx context.Context, tx *sqlx.Tx, id, status string, paidAt *time.Time) error {
-	// TODO: Implement actual database update with transaction
-	// For now, just mock success
-	return nil
+	query := `
+		UPDATE deposits
+		SET status = $1, paid_at = $2, updated_at = NOW()
+		WHERE id = $3
+	`
+	_, err := tx.ExecContext(ctx, query, status, paidAt, id)
+	return err
 }
 
 // CountPending counts pending deposits for a user
@@ -225,6 +246,9 @@ func (r *depositRepository) FindByExternalID(ctx context.Context, externalID str
 	var deposit domain.Deposit
 	err := r.db.GetContext(ctx, &deposit, query, externalID)
 	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
 		return nil, err
 	}
 
@@ -238,6 +262,9 @@ func (r *depositRepository) FindByExternalIDForUpdate(ctx context.Context, tx *s
 	var deposit domain.Deposit
 	err := tx.GetContext(ctx, &deposit, query, externalID)
 	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
 		return nil, err
 	}
 

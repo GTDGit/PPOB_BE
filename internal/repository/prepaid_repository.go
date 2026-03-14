@@ -28,6 +28,7 @@ type PrepaidRepository interface {
 	FindTransactionByID(ctx context.Context, id string) (*domain.PrepaidTransaction, error)
 	FindTransactionByOrderID(ctx context.Context, orderID string) (*domain.PrepaidTransaction, error)
 	UpdateTransactionStatus(ctx context.Context, id, status string) error
+	UpdateTransactionStatusWithTx(ctx context.Context, tx *sqlx.Tx, id, status string) error
 
 	// Transaction management
 	BeginTx(ctx context.Context) (*sqlx.Tx, error)
@@ -44,20 +45,16 @@ func NewPrepaidRepository(db *sqlx.DB) PrepaidRepository {
 }
 
 // Column constants for explicit SELECT
-const prepaidInquiryColumns = `id, user_id, service_type, target, operator_id, operator_name, 
-                               product_id, product_name, product_price, admin_fee, 
-                               created_at, expires_at`
+const prepaidInquiryColumns = `id, user_id, service_type, target, target_valid,
+	operator_id, customer_id, customer_name, expires_at, created_at`
 
-const prepaidOrderColumns = `id, user_id, inquiry_id, service_type, target, operator_id, operator_name, 
-                             product_id, product_name, product_price, admin_fee, 
-                             voucher_id, voucher_discount, total_payment, pin_verified, 
-                             status, created_at, expires_at`
+const prepaidOrderColumns = `id, user_id, inquiry_id, product_id, status, service_type,
+	target, product_price, admin_fee, subtotal, total_discount, total_payment,
+	expires_at, created_at, updated_at`
 
-const prepaidTransactionColumns = `id, user_id, order_id, service_type, target, operator_id, operator_name, 
-                                   product_id, product_name, product_price, admin_fee, voucher_discount, 
-                                   total_payment, balance_before, balance_after, reference_number, 
-                                   serial_number, external_id, status, failed_reason, 
-                                   completed_at, created_at, updated_at`
+const prepaidTransactionColumns = `id, user_id, order_id, status, service_type, target,
+	product_id, total_payment, balance_before, balance_after, serial_number,
+	reference_number, token, kwh, completed_at, created_at, updated_at`
 
 // BeginTx begins a new database transaction
 func (r *prepaidRepository) BeginTx(ctx context.Context) (*sqlx.Tx, error) {
@@ -211,5 +208,12 @@ func (r *prepaidRepository) FindTransactionByOrderID(ctx context.Context, orderI
 func (r *prepaidRepository) UpdateTransactionStatus(ctx context.Context, id, status string) error {
 	query := `UPDATE prepaid_transactions SET status = $1, updated_at = NOW() WHERE id = $2`
 	_, err := r.db.ExecContext(ctx, query, status, id)
+	return err
+}
+
+// UpdateTransactionStatusWithTx updates transaction status within a transaction
+func (r *prepaidRepository) UpdateTransactionStatusWithTx(ctx context.Context, tx *sqlx.Tx, id, status string) error {
+	query := `UPDATE prepaid_transactions SET status = $1, updated_at = NOW() WHERE id = $2`
+	_, err := tx.ExecContext(ctx, query, status, id)
 	return err
 }

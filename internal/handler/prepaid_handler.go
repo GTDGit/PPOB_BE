@@ -15,12 +15,14 @@ import (
 // PrepaidHandler handles prepaid transaction requests
 type PrepaidHandler struct {
 	prepaidService *service.PrepaidService
+	callbackSecret string
 }
 
 // NewPrepaidHandler creates a new prepaid handler
-func NewPrepaidHandler(prepaidService *service.PrepaidService) *PrepaidHandler {
+func NewPrepaidHandler(prepaidService *service.PrepaidService, callbackSecret string) *PrepaidHandler {
 	return &PrepaidHandler{
 		prepaidService: prepaidService,
+		callbackSecret: callbackSecret,
 	}
 }
 
@@ -154,19 +156,18 @@ func (h *PrepaidHandler) HandleWebhook(c *gin.Context) {
 	}
 
 	// Get signature from header
-	signature := c.GetHeader("X-Callback-Signature")
+	signature := getGerbangSignature(c)
 	if signature == "" {
 		slog.Error("webhook signature missing")
 		respondWithError(c, domain.NewError(domain.CodeUnauthorized, "Signature tidak valid", 401))
 		return
 	}
 
-	// Verify signature (using Gerbang callback secret from config)
-	// TODO: Get callback secret from config
-	// if !gerbang.VerifySignature(rawBody, signature, callbackSecret) {
-	//     respondWithError(c, domain.NewError(domain.CodeUnauthorized, "Signature tidak valid", 401))
-	//     return
-	// }
+	if h.callbackSecret != "" && !gerbang.VerifySignature(rawBody, signature, h.callbackSecret) {
+		slog.Error("webhook signature mismatch")
+		respondWithError(c, domain.NewError(domain.CodeUnauthorized, "Signature tidak valid", 401))
+		return
+	}
 
 	// Parse webhook payload
 	webhook, err := gerbang.ParseWebhook(rawBody)

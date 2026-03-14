@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -443,151 +444,223 @@ func (r *productRepository) FindAllTVProviders(ctx context.Context) ([]*domain.T
 
 // ========== GTD Product Sync Methods ==========
 
-// Mock storage for synced products (in-memory for now)
-var mockProducts = []*domain.Product{}
+const productColumns = `id, sku_code, name, category, brand, type, price, admin,
+	commission, is_active, description, gtd_updated_at, created_at, updated_at`
 
 // FindBySKU finds product by SKU code
 func (r *productRepository) FindBySKU(ctx context.Context, skuCode string) (*domain.Product, error) {
-	// Mock implementation - will use DB query in production
-	for _, product := range mockProducts {
-		if product.SKUCode == skuCode {
-			return product, nil
+	query := `SELECT ` + productColumns + ` FROM products WHERE sku_code = $1 LIMIT 1`
+
+	var product domain.Product
+	if err := r.db.GetContext(ctx, &product, query, skuCode); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
 		}
+		return nil, err
 	}
-	return nil, nil
+
+	return &product, nil
 }
 
 // Create creates a new product
 func (r *productRepository) Create(ctx context.Context, product *domain.Product) error {
-	// Mock implementation
-	product.CreatedAt = time.Now()
-	product.UpdatedAt = time.Now()
-	mockProducts = append(mockProducts, product)
-	return nil
+	query := `
+		INSERT INTO products (
+			id, sku_code, name, category, brand, type, price, admin,
+			commission, is_active, description, gtd_updated_at, created_at, updated_at
+		) VALUES (
+			:id, :sku_code, :name, :category, :brand, :type, :price, :admin,
+			:commission, :is_active, :description, :gtd_updated_at, NOW(), NOW()
+		)
+	`
+	_, err := r.db.NamedExecContext(ctx, query, product)
+	return err
 }
 
 // Update updates an existing product
 func (r *productRepository) Update(ctx context.Context, product *domain.Product) error {
-	// Mock implementation
-	for i, p := range mockProducts {
-		if p.SKUCode == product.SKUCode {
-			product.UpdatedAt = time.Now()
-			mockProducts[i] = product
-			return nil
-		}
-	}
-	return fmt.Errorf("product not found")
+	query := `
+		UPDATE products
+		SET
+			id = :id,
+			name = :name,
+			category = :category,
+			brand = :brand,
+			type = :type,
+			price = :price,
+			admin = :admin,
+			commission = :commission,
+			is_active = :is_active,
+			description = :description,
+			gtd_updated_at = :gtd_updated_at,
+			updated_at = NOW()
+		WHERE sku_code = :sku_code
+	`
+	_, err := r.db.NamedExecContext(ctx, query, product)
+	return err
 }
 
 // BulkUpsert upserts multiple products efficiently
 func (r *productRepository) BulkUpsert(ctx context.Context, products []*domain.Product) error {
-	// Mock implementation - will use INSERT ON CONFLICT in production
+	if len(products) == 0 {
+		return nil
+	}
+
+	tx, err := r.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin product upsert transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	query := `
+		INSERT INTO products (
+			id, sku_code, name, category, brand, type, price, admin,
+			commission, is_active, description, gtd_updated_at, created_at, updated_at
+		) VALUES (
+			:id, :sku_code, :name, :category, :brand, :type, :price, :admin,
+			:commission, :is_active, :description, :gtd_updated_at, NOW(), NOW()
+		)
+		ON CONFLICT (sku_code) DO UPDATE SET
+			id = EXCLUDED.id,
+			name = EXCLUDED.name,
+			category = EXCLUDED.category,
+			brand = EXCLUDED.brand,
+			type = EXCLUDED.type,
+			price = EXCLUDED.price,
+			admin = EXCLUDED.admin,
+			commission = EXCLUDED.commission,
+			is_active = EXCLUDED.is_active,
+			description = EXCLUDED.description,
+			gtd_updated_at = EXCLUDED.gtd_updated_at,
+			updated_at = NOW()
+	`
+
 	for _, product := range products {
-		existing, _ := r.FindBySKU(ctx, product.SKUCode)
-		if existing != nil {
-			// Update existing
-			r.Update(ctx, product)
-		} else {
-			// Create new
-			r.Create(ctx, product)
+		if _, err := tx.NamedExecContext(ctx, query, product); err != nil {
+			return fmt.Errorf("failed to upsert product %s: %w", product.SKUCode, err)
 		}
 	}
-	return nil
+
+	return tx.Commit()
 }
 
 // FindAll returns products with filters
 func (r *productRepository) FindAll(ctx context.Context, filter ProductFilter) ([]*domain.Product, error) {
-	// Mock implementation
-	result := []*domain.Product{}
+	query := `SELECT ` + productColumns + ` FROM products WHERE 1=1`
+	args := make([]interface{}, 0, 6)
+	argIdx := 1
 
-	for _, product := range mockProducts {
-		// Apply filters
-		if filter.Type != "" && product.Type != filter.Type {
-			continue
-		}
-		if filter.Category != "" && product.Category != filter.Category {
-			continue
-		}
-		if filter.Brand != "" && product.Brand != filter.Brand {
-			continue
-		}
-		if filter.IsActive != nil && product.IsActive != *filter.IsActive {
-			continue
-		}
-
-		result = append(result, product)
+	if filter.Type != "" {
+		query += fmt.Sprintf(" AND type = $%d", argIdx)
+		args = append(args, filter.Type)
+		argIdx++
+	}
+	if filter.Category != "" {
+		query += fmt.Sprintf(" AND category = $%d", argIdx)
+		args = append(args, filter.Category)
+		argIdx++
+	}
+	if filter.Brand != "" {
+		query += fmt.Sprintf(" AND brand = $%d", argIdx)
+		args = append(args, filter.Brand)
+		argIdx++
+	}
+	if filter.Search != "" {
+		query += fmt.Sprintf(" AND (name ILIKE $%d OR description ILIKE $%d OR sku_code ILIKE $%d)", argIdx, argIdx, argIdx)
+		args = append(args, "%"+filter.Search+"%")
+		argIdx++
+	}
+	if filter.IsActive != nil {
+		query += fmt.Sprintf(" AND is_active = $%d", argIdx)
+		args = append(args, *filter.IsActive)
+		argIdx++
 	}
 
-	// Apply pagination
-	if filter.Page > 0 && filter.PerPage > 0 {
-		start := (filter.Page - 1) * filter.PerPage
-		end := start + filter.PerPage
+	query += ` ORDER BY category ASC, brand ASC, price ASC, name ASC`
 
-		if start >= len(result) {
+	if filter.Page > 0 && filter.PerPage > 0 {
+		query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argIdx, argIdx+1)
+		args = append(args, filter.PerPage, (filter.Page-1)*filter.PerPage)
+	}
+
+	var products []*domain.Product
+	if err := r.db.SelectContext(ctx, &products, query, args...); err != nil {
+		if err == sql.ErrNoRows {
 			return []*domain.Product{}, nil
 		}
-		if end > len(result) {
-			end = len(result)
-		}
-
-		result = result[start:end]
+		return nil, err
 	}
 
-	return result, nil
+	return products, nil
 }
 
 // FindByID finds product by ID
 func (r *productRepository) FindByID(ctx context.Context, id string) (*domain.Product, error) {
-	for _, product := range mockProducts {
-		if product.ID == id {
-			return product, nil
+	query := `SELECT ` + productColumns + ` FROM products WHERE id = $1 LIMIT 1`
+
+	var product domain.Product
+	if err := r.db.GetContext(ctx, &product, query, id); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
 		}
+		return nil, err
 	}
-	return nil, nil
+
+	return &product, nil
 }
 
 // FindByCategory finds products by category
 func (r *productRepository) FindByCategory(ctx context.Context, category string) ([]*domain.Product, error) {
-	result := []*domain.Product{}
-	for _, product := range mockProducts {
-		if product.Category == category && product.IsActive {
-			result = append(result, product)
+	query := `SELECT ` + productColumns + ` FROM products WHERE category = $1 AND is_active = true ORDER BY price ASC, name ASC`
+
+	var products []*domain.Product
+	if err := r.db.SelectContext(ctx, &products, query, category); err != nil {
+		if err == sql.ErrNoRows {
+			return []*domain.Product{}, nil
 		}
+		return nil, err
 	}
-	return result, nil
+
+	return products, nil
 }
 
 // FindByBrand finds products by brand
 func (r *productRepository) FindByBrand(ctx context.Context, brand string) ([]*domain.Product, error) {
-	result := []*domain.Product{}
-	for _, product := range mockProducts {
-		if product.Brand == brand && product.IsActive {
-			result = append(result, product)
+	query := `SELECT ` + productColumns + ` FROM products WHERE brand = $1 AND is_active = true ORDER BY price ASC, name ASC`
+
+	var products []*domain.Product
+	if err := r.db.SelectContext(ctx, &products, query, brand); err != nil {
+		if err == sql.ErrNoRows {
+			return []*domain.Product{}, nil
 		}
+		return nil, err
 	}
-	return result, nil
+
+	return products, nil
 }
 
 // CountAll returns total products count
 func (r *productRepository) CountAll(ctx context.Context) (int, error) {
-	return len(mockProducts), nil
+	var count int
+	if err := r.db.GetContext(ctx, &count, `SELECT COUNT(*) FROM products`); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 // GetLastSyncTime returns last sync timestamp
 func (r *productRepository) GetLastSyncTime(ctx context.Context) (*time.Time, error) {
-	if len(mockProducts) == 0 {
+	var lastSync sql.NullTime
+	query := `SELECT MAX(COALESCE(gtd_updated_at, updated_at)) FROM products`
+
+	if err := r.db.GetContext(ctx, &lastSync, query); err != nil {
+		return nil, err
+	}
+	if !lastSync.Valid {
 		return nil, nil
 	}
 
-	// Return latest UpdatedAt
-	var latest time.Time
-	for _, p := range mockProducts {
-		if p.UpdatedAt.After(latest) {
-			latest = p.UpdatedAt
-		}
-	}
-
-	return &latest, nil
+	return &lastSync.Time, nil
 }
 
 // ========== Static Provider Data Methods ==========

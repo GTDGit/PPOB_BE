@@ -108,9 +108,11 @@ func (c *Client) CreateInquiry(ctx context.Context, referenceID, skuCode, custom
 }
 
 // CreatePostpaidPayment creates a postpaid payment
-func (c *Client) CreatePostpaidPayment(ctx context.Context, referenceID, transactionID string) (*TransactionResponse, error) {
+func (c *Client) CreatePostpaidPayment(ctx context.Context, referenceID, transactionID, skuCode, customerNo string) (*TransactionResponse, error) {
 	req := TransactionRequest{
 		ReferenceID:   referenceID,
+		SKUCode:       skuCode,
+		CustomerNo:    customerNo,
 		Type:          "payment",
 		TransactionID: transactionID,
 	}

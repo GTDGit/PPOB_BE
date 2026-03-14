@@ -10,6 +10,7 @@ import (
 
 	"github.com/GTDGit/PPOB_BE/internal/domain"
 	"github.com/GTDGit/PPOB_BE/internal/repository"
+	"github.com/google/uuid"
 )
 
 // NotificationService handles notification business logic
@@ -195,6 +196,42 @@ func (s *NotificationService) Delete(ctx context.Context, userID, notificationID
 	return &domain.DeleteNotificationResponse{
 		Deleted:        true,
 		NotificationID: notificationID,
+	}, nil
+}
+
+// RegisterPushToken upserts a push token for the current device.
+func (s *NotificationService) RegisterPushToken(ctx context.Context, userID, deviceID, token, platform string) (*domain.PushTokenResponse, error) {
+	pushToken := &domain.PushToken{
+		ID:        "pt_" + uuid.New().String()[:8],
+		UserID:    userID,
+		DeviceID:  deviceID,
+		Token:     token,
+		Platform:  platform,
+		IsActive:  true,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	if err := s.notificationRepo.UpsertPushToken(ctx, pushToken); err != nil {
+		return nil, fmt.Errorf("failed to register push token: %w", err)
+	}
+
+	return &domain.PushTokenResponse{
+		Registered: true,
+		DeviceID:   deviceID,
+		Platform:   platform,
+	}, nil
+}
+
+// DeactivatePushToken deactivates a push token for the current device.
+func (s *NotificationService) DeactivatePushToken(ctx context.Context, userID, deviceID string) (*domain.PushTokenResponse, error) {
+	if err := s.notificationRepo.DeactivatePushToken(ctx, userID, deviceID); err != nil {
+		return nil, fmt.Errorf("failed to deactivate push token: %w", err)
+	}
+
+	return &domain.PushTokenResponse{
+		Registered: false,
+		DeviceID:   deviceID,
 	}, nil
 }
 

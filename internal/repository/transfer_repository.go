@@ -39,14 +39,13 @@ func NewTransferRepository(db *sqlx.DB) TransferRepository {
 }
 
 // Column constants for explicit SELECT
-const transferInquiryColumns = `id, user_id, bank_code, bank_name, account_number, account_name, 
-                                amount, admin_fee, total_payment, validated, 
-                                created_at, expires_at`
+const transferInquiryColumns = `id, user_id, bank_code, bank_name, account_number, account_name,
+	amount, admin_fee, total_payment, gerbang_inquiry_id, fee, expires_at, created_at`
 
-const transferTransactionColumns = `id, user_id, inquiry_id, bank_code, bank_name, account_number, account_name, 
-                                    amount, admin_fee, voucher_discount, total_payment, 
-                                    balance_before, balance_after, reference_number, external_id, note, 
-                                    status, failed_reason, completed_at, created_at, updated_at`
+const transferTransactionColumns = `id, user_id, inquiry_id, status, bank_code, bank_name,
+	account_number, account_name, amount, admin_fee, total_payment, note, balance_before,
+	balance_after, reference_number, gerbang_transfer_id, purpose, fee, completed_at,
+	created_at, updated_at`
 
 // BeginTx begins a new database transaction
 func (r *transferRepository) BeginTx(ctx context.Context) (*sqlx.Tx, error) {
@@ -58,10 +57,10 @@ func (r *transferRepository) CreateInquiry(ctx context.Context, inquiry *domain.
 	query := `
 		INSERT INTO transfer_inquiries (
 			id, user_id, bank_code, bank_name, account_number, account_name,
-			amount, admin_fee, total_payment, expires_at, created_at
+			amount, admin_fee, total_payment, gerbang_inquiry_id, fee, expires_at, created_at
 		) VALUES (
 			:id, :user_id, :bank_code, :bank_name, :account_number, :account_name,
-			:amount, :admin_fee, :total_payment, :expires_at, :created_at
+			:amount, :admin_fee, :total_payment, :gerbang_inquiry_id, :fee, :expires_at, :created_at
 		)
 		ON CONFLICT (id) DO UPDATE SET
 			user_id = EXCLUDED.user_id,
@@ -72,6 +71,8 @@ func (r *transferRepository) CreateInquiry(ctx context.Context, inquiry *domain.
 			amount = EXCLUDED.amount,
 			admin_fee = EXCLUDED.admin_fee,
 			total_payment = EXCLUDED.total_payment,
+			gerbang_inquiry_id = EXCLUDED.gerbang_inquiry_id,
+			fee = EXCLUDED.fee,
 			expires_at = EXCLUDED.expires_at
 	`
 	_, err := r.db.NamedExecContext(ctx, query, inquiry)
@@ -104,13 +105,13 @@ func (r *transferRepository) FindInquiryByUserAndID(ctx context.Context, userID,
 func (r *transferRepository) CreateTransaction(ctx context.Context, tx *domain.TransferTransaction) error {
 	query := `
 		INSERT INTO transfer_transactions (
-			id, user_id, inquiry_id, status, bank_code, bank_name,
-			account_number, account_name, amount, admin_fee, total_payment, note,
-			balance_before, balance_after, reference_number, completed_at, created_at, updated_at
+			id, user_id, inquiry_id, status, bank_code, bank_name, account_number, account_name,
+			amount, admin_fee, total_payment, note, balance_before, balance_after,
+			reference_number, gerbang_transfer_id, purpose, fee, completed_at, created_at, updated_at
 		) VALUES (
-			:id, :user_id, :inquiry_id, :status, :bank_code, :bank_name,
-			:account_number, :account_name, :amount, :admin_fee, :total_payment, :note,
-			:balance_before, :balance_after, :reference_number, :completed_at, :created_at, :updated_at
+			:id, :user_id, :inquiry_id, :status, :bank_code, :bank_name, :account_number, :account_name,
+			:amount, :admin_fee, :total_payment, :note, :balance_before, :balance_after,
+			:reference_number, :gerbang_transfer_id, :purpose, :fee, :completed_at, :created_at, :updated_at
 		)
 	`
 	_, err := r.db.NamedExecContext(ctx, query, tx)
@@ -121,13 +122,13 @@ func (r *transferRepository) CreateTransaction(ctx context.Context, tx *domain.T
 func (r *transferRepository) CreateTransactionWithTx(ctx context.Context, dbtx *sqlx.Tx, tx *domain.TransferTransaction) error {
 	query := `
 		INSERT INTO transfer_transactions (
-			id, user_id, inquiry_id, status, bank_code, bank_name,
-			account_number, account_name, amount, admin_fee, total_payment, note,
-			balance_before, balance_after, reference_number, completed_at, created_at, updated_at
+			id, user_id, inquiry_id, status, bank_code, bank_name, account_number, account_name,
+			amount, admin_fee, total_payment, note, balance_before, balance_after,
+			reference_number, gerbang_transfer_id, purpose, fee, completed_at, created_at, updated_at
 		) VALUES (
-			:id, :user_id, :inquiry_id, :status, :bank_code, :bank_name,
-			:account_number, :account_name, :amount, :admin_fee, :total_payment, :note,
-			:balance_before, :balance_after, :reference_number, :completed_at, :created_at, :updated_at
+			:id, :user_id, :inquiry_id, :status, :bank_code, :bank_name, :account_number, :account_name,
+			:amount, :admin_fee, :total_payment, :note, :balance_before, :balance_after,
+			:reference_number, :gerbang_transfer_id, :purpose, :fee, :completed_at, :created_at, :updated_at
 		)
 	`
 	_, err := dbtx.NamedExecContext(ctx, query, tx)

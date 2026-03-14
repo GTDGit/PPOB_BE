@@ -2,13 +2,15 @@ package repository
 
 import (
 	"context"
-	"time"
+	"database/sql"
+	"fmt"
+	"strings"
 
-	"github.com/jmoiron/sqlx"
 	"github.com/GTDGit/PPOB_BE/internal/domain"
+	"github.com/jmoiron/sqlx"
 )
 
-// NotificationRepository defines the interface for notification operations
+// NotificationRepository defines the interface for notification operations.
 type NotificationRepository interface {
 	FindByUserID(ctx context.Context, userID string, filter NotificationFilter) ([]*domain.Notification, int, error)
 	FindByID(ctx context.Context, id string) (*domain.Notification, error)
@@ -19,60 +21,58 @@ type NotificationRepository interface {
 	MarkAllAsRead(ctx context.Context, userID string, category *string) (int, error)
 	Delete(ctx context.Context, id string) error
 	Create(ctx context.Context, notif *domain.Notification) error
+	UpsertPushToken(ctx context.Context, token *domain.PushToken) error
+	DeactivatePushToken(ctx context.Context, userID, deviceID string) error
 }
 
-// NotificationFilter represents filter options for notification list
+// NotificationFilter represents filter options for notification list.
 type NotificationFilter struct {
-	Category string // security, transaction, deposit, promo, info, qris, all
-	IsRead   *bool  // nil = all, true = read only, false = unread only
+	Category string
+	IsRead   *bool
 	Page     int
 	PerPage  int
 }
 
-// notificationRepository implements NotificationRepository
 type notificationRepository struct {
 	db *sqlx.DB
 }
 
-// NewNotificationRepository creates a new notification repository
+const notificationColumns = `
+	id, user_id, category, title, body, short_body, image_url, action_type,
+	action_value, action_button_text, metadata, is_read, read_at, created_at, updated_at
+`
+
+// NewNotificationRepository creates a new notification repository.
 func NewNotificationRepository(db *sqlx.DB) NotificationRepository {
 	return &notificationRepository{db: db}
 }
 
-// FindByUserID finds notifications by user ID with filters and pagination
+// FindByUserID finds notifications by user ID with filters and pagination.
 func (r *notificationRepository) FindByUserID(ctx context.Context, userID string, filter NotificationFilter) ([]*domain.Notification, int, error) {
-	// For now, return mock notifications
-	allNotifications := r.getMockNotifications()
+	whereClauses := []string{"user_id = $1"}
+	args := []interface{}{userID}
+	argIdx := 2
 
-	// Filter by user
-	var userNotifications []*domain.Notification
-	for _, notif := range allNotifications {
-		if notif.UserID == userID {
-			userNotifications = append(userNotifications, notif)
-		}
+	if filter.Category != "" && filter.Category != "all" {
+		whereClauses = append(whereClauses, fmt.Sprintf("category = $%d", argIdx))
+		args = append(args, filter.Category)
+		argIdx++
 	}
 
-	// Apply filters
-	var filtered []*domain.Notification
-	for _, notif := range userNotifications {
-		// Filter by category
-		if filter.Category != "" && filter.Category != "all" && notif.Category != filter.Category {
-			continue
-		}
-
-		// Filter by isRead
-		if filter.IsRead != nil {
-			if *filter.IsRead != notif.IsRead {
-				continue
-			}
-		}
-
-		filtered = append(filtered, notif)
+	if filter.IsRead != nil {
+		whereClauses = append(whereClauses, fmt.Sprintf("is_read = $%d", argIdx))
+		args = append(args, *filter.IsRead)
+		argIdx++
 	}
 
-	total := len(filtered)
+	whereSQL := "WHERE " + strings.Join(whereClauses, " AND ")
 
-	// Apply pagination
+	countQuery := `SELECT COUNT(*) FROM notifications ` + whereSQL
+	var total int
+	if err := r.db.GetContext(ctx, &total, countQuery, args...); err != nil {
+		return nil, 0, err
+	}
+
 	page := filter.Page
 	if page < 1 {
 		page = 1
@@ -85,58 +85,63 @@ func (r *notificationRepository) FindByUserID(ctx context.Context, userID string
 		perPage = 50
 	}
 
-	start := (page - 1) * perPage
-	end := start + perPage
+	offset := (page - 1) * perPage
+	query := `SELECT ` + notificationColumns + ` FROM notifications ` + whereSQL +
+		fmt.Sprintf(` ORDER BY created_at DESC LIMIT $%d OFFSET $%d`, argIdx, argIdx+1)
 
-	if start >= len(filtered) {
-		return []*domain.Notification{}, total, nil
+	queryArgs := append(args, perPage, offset)
+	var notifications []*domain.Notification
+	if err := r.db.SelectContext(ctx, &notifications, query, queryArgs...); err != nil {
+		return nil, 0, err
 	}
-	if end > len(filtered) {
-		end = len(filtered)
-	}
 
-	paginated := filtered[start:end]
-
-	return paginated, total, nil
+	return notifications, total, nil
 }
 
-// FindByID finds a notification by ID
+// FindByID finds a notification by ID.
 func (r *notificationRepository) FindByID(ctx context.Context, id string) (*domain.Notification, error) {
-	notifications := r.getMockNotifications()
-	for _, notif := range notifications {
-		if notif.ID == id {
-			return notif, nil
+	query := `SELECT ` + notificationColumns + ` FROM notifications WHERE id = $1`
+
+	var notif domain.Notification
+	if err := r.db.GetContext(ctx, &notif, query, id); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
 		}
+		return nil, err
 	}
-	return nil, nil
+
+	return &notif, nil
 }
 
-// FindByUserAndID finds a notification by user ID and notification ID (ownership validation)
+// FindByUserAndID finds a notification by user ID and notification ID.
 func (r *notificationRepository) FindByUserAndID(ctx context.Context, userID, id string) (*domain.Notification, error) {
-	notifications := r.getMockNotifications()
-	for _, notif := range notifications {
-		if notif.ID == id && notif.UserID == userID {
-			return notif, nil
+	query := `SELECT ` + notificationColumns + ` FROM notifications WHERE id = $1 AND user_id = $2`
+
+	var notif domain.Notification
+	if err := r.db.GetContext(ctx, &notif, query, id, userID); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
 		}
+		return nil, err
 	}
-	return nil, nil
+
+	return &notif, nil
 }
 
-// CountUnread counts unread notifications for a user
+// CountUnread counts unread notifications for a user.
 func (r *notificationRepository) CountUnread(ctx context.Context, userID string) (int, error) {
-	notifications := r.getMockNotifications()
-	count := 0
-	for _, notif := range notifications {
-		if notif.UserID == userID && !notif.IsRead {
-			count++
-		}
+	query := `SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND is_read = false`
+
+	var count int
+	if err := r.db.GetContext(ctx, &count, query, userID); err != nil {
+		return 0, err
 	}
+
 	return count, nil
 }
 
-// CountUnreadByCategory counts unread notifications by category for a user
+// CountUnreadByCategory counts unread notifications by category for a user.
 func (r *notificationRepository) CountUnreadByCategory(ctx context.Context, userID string) (map[string]int, error) {
-	notifications := r.getMockNotifications()
 	counts := map[string]int{
 		domain.NotificationCategorySecurity:    0,
 		domain.NotificationCategoryTransaction: 0,
@@ -146,151 +151,116 @@ func (r *notificationRepository) CountUnreadByCategory(ctx context.Context, user
 		domain.NotificationCategoryQRIS:        0,
 	}
 
-	for _, notif := range notifications {
-		if notif.UserID == userID && !notif.IsRead {
-			counts[notif.Category]++
+	query := `
+		SELECT category, COUNT(*) AS total
+		FROM notifications
+		WHERE user_id = $1 AND is_read = false
+		GROUP BY category
+	`
+
+	rows, err := r.db.QueryxContext(ctx, query, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var category string
+		var total int
+		if err := rows.Scan(&category, &total); err != nil {
+			return nil, err
 		}
+		counts[category] = total
 	}
 
-	return counts, nil
+	return counts, rows.Err()
 }
 
-// MarkAsRead marks a notification as read
+// MarkAsRead marks a notification as read.
 func (r *notificationRepository) MarkAsRead(ctx context.Context, id string) error {
-	// In production, update database
-	// For now, just return success
-	return nil
+	query := `
+		UPDATE notifications
+		SET is_read = true, read_at = NOW(), updated_at = NOW()
+		WHERE id = $1
+	`
+	_, err := r.db.ExecContext(ctx, query, id)
+	return err
 }
 
-// MarkAllAsRead marks all notifications as read for a user
+// MarkAllAsRead marks all notifications as read for a user.
 func (r *notificationRepository) MarkAllAsRead(ctx context.Context, userID string, category *string) (int, error) {
-	// In production, update database and return affected count
-	// For now, simulate by counting unread
-	notifications := r.getMockNotifications()
-	count := 0
-	for _, notif := range notifications {
-		if notif.UserID == userID && !notif.IsRead {
-			if category != nil && notif.Category != *category {
-				continue
-			}
-			count++
-		}
+	query := `
+		UPDATE notifications
+		SET is_read = true, read_at = NOW(), updated_at = NOW()
+		WHERE user_id = $1 AND is_read = false
+	`
+	args := []interface{}{userID}
+
+	if category != nil && *category != "" {
+		query += ` AND category = $2`
+		args = append(args, *category)
 	}
-	return count, nil
+
+	result, err := r.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, err
+	}
+
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+
+	return int(affected), nil
 }
 
-// Delete deletes a notification
+// Delete deletes a notification.
 func (r *notificationRepository) Delete(ctx context.Context, id string) error {
-	// In production, delete from database
-	// For now, just return success
-	return nil
+	_, err := r.db.ExecContext(ctx, `DELETE FROM notifications WHERE id = $1`, id)
+	return err
 }
 
-// Create creates a new notification
+// Create creates a new notification.
 func (r *notificationRepository) Create(ctx context.Context, notif *domain.Notification) error {
-	// In production, insert into database
-	// For now, just return success
-	return nil
+	query := `
+		INSERT INTO notifications (
+			id, user_id, category, title, body, short_body, image_url, action_type,
+			action_value, action_button_text, metadata, is_read, read_at, created_at, updated_at
+		) VALUES (
+			:id, :user_id, :category, :title, :body, :short_body, :image_url, :action_type,
+			:action_value, :action_button_text, :metadata, :is_read, :read_at, :created_at, :updated_at
+		)
+	`
+	_, err := r.db.NamedExecContext(ctx, query, notif)
+	return err
 }
 
-// getMockNotifications returns mock notification data
-func (r *notificationRepository) getMockNotifications() []*domain.Notification {
-	now := time.Now()
+// UpsertPushToken creates or updates a device push token.
+func (r *notificationRepository) UpsertPushToken(ctx context.Context, token *domain.PushToken) error {
+	query := `
+		INSERT INTO push_tokens (
+			id, user_id, device_id, token, platform, is_active, created_at, updated_at
+		) VALUES (
+			:id, :user_id, :device_id, :token, :platform, :is_active, :created_at, :updated_at
+		)
+		ON CONFLICT (user_id, device_id)
+		DO UPDATE SET
+			token = EXCLUDED.token,
+			platform = EXCLUDED.platform,
+			is_active = true,
+			updated_at = NOW()
+	`
+	_, err := r.db.NamedExecContext(ctx, query, token)
+	return err
+}
 
-	actionDeeplink := domain.NotificationActionDeeplink
-
-	actionValue1 := "/security/sessions"
-	actionValue2 := "/security/sessions"
-	actionValue3 := "/transactions/trx_pulsa_abc123"
-	actionValue4 := "/services/token-pln"
-	actionValue5 := "/qris/income/qris_inc_abc123"
-
-	imageURL4 := "https://cdn.ppob.id/notifications/promo-akhir-tahun.png"
-
-	readAt2 := now.Add(-1 * time.Hour)
-	readAt3 := now.Add(-2 * time.Hour)
-	readAt5 := now.Add(-3 * time.Hour)
-
-	return []*domain.Notification{
-		// Security - Unread
-		{
-			ID:          "notif_sec_abc123",
-			UserID:      "mock_user_id",
-			Category:    domain.NotificationCategorySecurity,
-			Title:       "Info PPOB",
-			Body:        "Akun anda tercatat login di perangkat lain. Abaikan pesan ini jika itu anda sendiri.",
-			ImageURL:    nil,
-			ActionType:  &actionDeeplink,
-			ActionValue: &actionValue1,
-			Metadata:    nil,
-			IsRead:      false,
-			ReadAt:      nil,
-			CreatedAt:   now.Add(-5 * time.Minute),
-			UpdatedAt:   now.Add(-5 * time.Minute),
-		},
-		// Security - Read
-		{
-			ID:          "notif_sec_xyz789",
-			UserID:      "mock_user_id",
-			Category:    domain.NotificationCategorySecurity,
-			Title:       "Info PPOB",
-			Body:        "Akun anda tercatat login di perangkat lain. Abaikan pesan ini jika itu anda sendiri.",
-			ImageURL:    nil,
-			ActionType:  &actionDeeplink,
-			ActionValue: &actionValue2,
-			Metadata:    nil,
-			IsRead:      true,
-			ReadAt:      &readAt2,
-			CreatedAt:   now.Add(-1 * time.Hour).Add(-5 * time.Minute),
-			UpdatedAt:   now.Add(-1 * time.Hour),
-		},
-		// Transaction - Read
-		{
-			ID:          "notif_trx_def456",
-			UserID:      "mock_user_id",
-			Category:    domain.NotificationCategoryTransaction,
-			Title:       "Transaksi Berhasil",
-			Body:        "Pembelian Pulsa Telkomsel 50.000 ke 081234567890 berhasil.",
-			ImageURL:    nil,
-			ActionType:  &actionDeeplink,
-			ActionValue: &actionValue3,
-			Metadata:    nil,
-			IsRead:      true,
-			ReadAt:      &readAt3,
-			CreatedAt:   now.Add(-2 * time.Hour),
-			UpdatedAt:   now.Add(-2 * time.Hour),
-		},
-		// Promo - Unread
-		{
-			ID:          "notif_promo_ghi789",
-			UserID:      "mock_user_id",
-			Category:    domain.NotificationCategoryPromo,
-			Title:       "Promo Akhir Tahun! 🎉",
-			Body:        "Cashback 20% untuk semua transaksi Token PLN. Berlaku sampai 31 Desember 2025.",
-			ImageURL:    &imageURL4,
-			ActionType:  &actionDeeplink,
-			ActionValue: &actionValue4,
-			Metadata:    nil,
-			IsRead:      false,
-			ReadAt:      nil,
-			CreatedAt:   now.Add(-1 * 24 * time.Hour),
-			UpdatedAt:   now.Add(-1 * 24 * time.Hour),
-		},
-		// QRIS - Read
-		{
-			ID:          "notif_qris_jkl012",
-			UserID:      "mock_user_id",
-			Category:    domain.NotificationCategoryQRIS,
-			Title:       "Pembayaran QRIS Diterima",
-			Body:        "Anda menerima pembayaran Rp50.000 dari BUDI SANTOSO via BCA.",
-			ImageURL:    nil,
-			ActionType:  &actionDeeplink,
-			ActionValue: &actionValue5,
-			Metadata:    nil,
-			IsRead:      true,
-			ReadAt:      &readAt5,
-			CreatedAt:   now.Add(-3 * 24 * time.Hour),
-			UpdatedAt:   now.Add(-3 * 24 * time.Hour),
-		},
-	}
+// DeactivatePushToken deactivates a push token for a device.
+func (r *notificationRepository) DeactivatePushToken(ctx context.Context, userID, deviceID string) error {
+	query := `
+		UPDATE push_tokens
+		SET is_active = false, updated_at = NOW()
+		WHERE user_id = $1 AND device_id = $2
+	`
+	_, err := r.db.ExecContext(ctx, query, userID, deviceID)
+	return err
 }

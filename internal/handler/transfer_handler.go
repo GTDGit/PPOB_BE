@@ -15,12 +15,14 @@ import (
 // TransferHandler handles transfer transaction requests
 type TransferHandler struct {
 	transferService *service.TransferService
+	callbackSecret  string
 }
 
 // NewTransferHandler creates a new transfer handler
-func NewTransferHandler(transferService *service.TransferService) *TransferHandler {
+func NewTransferHandler(transferService *service.TransferService, callbackSecret string) *TransferHandler {
 	return &TransferHandler{
 		transferService: transferService,
+		callbackSecret:  callbackSecret,
 	}
 }
 
@@ -114,19 +116,18 @@ func (h *TransferHandler) HandleWebhook(c *gin.Context) {
 	}
 
 	// Get signature from header
-	signature := c.GetHeader("X-Callback-Signature")
+	signature := getGerbangSignature(c)
 	if signature == "" {
 		slog.Error("webhook signature missing")
 		respondWithError(c, domain.NewError(domain.CodeUnauthorized, "Signature tidak valid", 401))
 		return
 	}
 
-	// Verify signature (using Gerbang callback secret from config)
-	// TODO: Get callback secret from config
-	// if !gerbang.VerifySignature(rawBody, signature, callbackSecret) {
-	//     respondWithError(c, domain.NewError(domain.CodeUnauthorized, "Signature tidak valid", 401))
-	//     return
-	// }
+	if h.callbackSecret != "" && !gerbang.VerifySignature(rawBody, signature, h.callbackSecret) {
+		slog.Error("webhook signature mismatch")
+		respondWithError(c, domain.NewError(domain.CodeUnauthorized, "Signature tidak valid", 401))
+		return
+	}
 
 	// Parse webhook payload
 	webhook, err := gerbang.ParseWebhook(rawBody)

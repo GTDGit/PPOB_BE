@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // ========== Webhook Types ==========
@@ -84,6 +85,9 @@ const (
 
 // VerifySignature verifies webhook signature using HMAC-SHA256
 func VerifySignature(payload []byte, signature, secretKey string) bool {
+	signature = strings.TrimSpace(signature)
+	signature = strings.TrimPrefix(strings.ToLower(signature), "sha256=")
+
 	// Create HMAC-SHA256 hash
 	mac := hmac.New(sha256.New, []byte(secretKey))
 	mac.Write(payload)
@@ -91,7 +95,7 @@ func VerifySignature(payload []byte, signature, secretKey string) bool {
 	expectedSignature := hex.EncodeToString(expectedMAC)
 
 	// Compare signatures
-	return hmac.Equal([]byte(signature), []byte(expectedSignature))
+	return hmac.Equal([]byte(signature), []byte(strings.ToLower(expectedSignature)))
 }
 
 // ParseWebhook parses webhook payload from raw bytes
