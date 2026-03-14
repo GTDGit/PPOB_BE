@@ -599,6 +599,21 @@ func (s *KYCService) SubmitForReview(ctx context.Context, userID string, session
 		return fmt.Errorf("failed to get session: %w", err)
 	}
 	if session == nil {
+		// VerifyLiveness finalizes the verification and removes the working session.
+		// Treat submit as idempotent when the user is already verified.
+		user, userErr := s.userRepo.FindByID(ctx, userID)
+		if userErr != nil {
+			return fmt.Errorf("failed to get user: %w", userErr)
+		}
+		if user != nil && user.KYCStatus == domain.KYCStatusVerified {
+			verification, verifyErr := s.kycRepo.FindVerificationByUserID(ctx, userID)
+			if verifyErr != nil {
+				return fmt.Errorf("failed to get verification: %w", verifyErr)
+			}
+			if verification != nil {
+				return nil
+			}
+		}
 		return domain.NewError(domain.CodeKYCSessionNotFound, "Sesi verifikasi tidak ditemukan", 404)
 	}
 	if session.UserID != userID {
