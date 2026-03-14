@@ -4,9 +4,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/GTDGit/PPOB_BE/internal/domain"
+	"github.com/GTDGit/PPOB_BE/internal/repository"
 	"github.com/GTDGit/PPOB_BE/pkg/jwt"
+	"github.com/gin-gonic/gin"
 )
 
 const (
@@ -17,8 +18,8 @@ const (
 	ClaimsKey           = "claims"
 )
 
-// JWTAuth returns a middleware that validates JWT tokens
-func JWTAuth(secret string) gin.HandlerFunc {
+// JWTAuth returns a middleware that validates JWT tokens and ensures the device session is still active.
+func JWTAuth(secret string, sessionRepo repository.SessionRepository) gin.HandlerFunc {
 	jwtGen := jwt.NewGenerator(secret, 15*time.Minute, 30*24*time.Hour)
 	return func(c *gin.Context) {
 		// Get authorization header
@@ -49,6 +50,16 @@ func JWTAuth(secret string) gin.HandlerFunc {
 			}
 			c.Abort()
 			return
+		}
+
+		// Enforce active session on every protected request so logout revokes access immediately.
+		if sessionRepo != nil {
+			session, err := sessionRepo.FindByUserIDAndDeviceID(c.Request.Context(), claims.UserID, claims.DeviceID)
+			if err != nil || session == nil {
+				respondError(c, domain.ErrUnauthorized)
+				c.Abort()
+				return
+			}
 		}
 
 		// Set claims in context

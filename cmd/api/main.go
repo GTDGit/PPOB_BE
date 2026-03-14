@@ -238,17 +238,17 @@ func main() {
 	v1 := router.Group("/v1")
 	{
 		// Home routes (protected)
-		v1.GET("/home", middleware.JWTAuth(cfg.JWT.Secret), homeHandler.GetHome)
+		v1.GET("/home", middleware.JWTAuth(cfg.JWT.Secret, sessionRepo), homeHandler.GetHome)
 
 		// Services routes (protected)
-		v1.GET("/services", middleware.JWTAuth(cfg.JWT.Secret), homeHandler.GetServices)
+		v1.GET("/services", middleware.JWTAuth(cfg.JWT.Secret, sessionRepo), homeHandler.GetServices)
 
 		// Banners routes (protected)
-		v1.GET("/banners", middleware.JWTAuth(cfg.JWT.Secret), homeHandler.GetBanners)
+		v1.GET("/banners", middleware.JWTAuth(cfg.JWT.Secret, sessionRepo), homeHandler.GetBanners)
 
 		// User routes (protected)
 		user := v1.Group("/user")
-		user.Use(middleware.JWTAuth(cfg.JWT.Secret))
+		user.Use(middleware.JWTAuth(cfg.JWT.Secret, sessionRepo))
 		{
 			user.GET("/balance", homeHandler.GetBalance)
 			user.GET("/profile", userHandler.GetProfile)
@@ -276,7 +276,7 @@ func main() {
 
 			// Protected with access token
 			protected := auth.Group("")
-			protected.Use(middleware.JWTAuth(cfg.JWT.Secret))
+			protected.Use(middleware.JWTAuth(cfg.JWT.Secret, sessionRepo))
 			{
 				protected.POST("/verify-pin-only", authHandler.VerifyPINOnly)
 				protected.POST("/logout", authHandler.Logout)
@@ -292,7 +292,7 @@ func main() {
 
 			// Change Phone (access token)
 			changePhone := auth.Group("/change-phone")
-			changePhone.Use(middleware.JWTAuth(cfg.JWT.Secret))
+			changePhone.Use(middleware.JWTAuth(cfg.JWT.Secret, sessionRepo))
 			{
 				changePhone.POST("/verify-old/request-otp", authHandler.ChangePhoneRequestOTPOld)
 				changePhone.POST("/verify-old", authHandler.ChangePhoneVerifyOld)
@@ -304,7 +304,7 @@ func main() {
 
 			// Email verification (protected)
 			email := auth.Group("/email")
-			email.Use(middleware.JWTAuth(cfg.JWT.Secret))
+			email.Use(middleware.JWTAuth(cfg.JWT.Secret, sessionRepo))
 			{
 				email.POST("/request-verification", authHandler.RequestEmailVerification)
 			}
@@ -315,7 +315,7 @@ func main() {
 
 		// Prepaid routes (protected)
 		prepaid := v1.Group("/prepaid")
-		prepaid.Use(middleware.JWTAuth(cfg.JWT.Secret))
+		prepaid.Use(middleware.JWTAuth(cfg.JWT.Secret, sessionRepo))
 		{
 			prepaid.POST("/inquiry", prepaidHandler.Inquiry)
 			prepaid.POST("/order", prepaidHandler.CreateOrder)
@@ -324,7 +324,7 @@ func main() {
 
 		// Postpaid routes (protected)
 		postpaid := v1.Group("/postpaid")
-		postpaid.Use(middleware.JWTAuth(cfg.JWT.Secret))
+		postpaid.Use(middleware.JWTAuth(cfg.JWT.Secret, sessionRepo))
 		{
 			postpaid.POST("/inquiry", postpaidHandler.Inquiry)
 			postpaid.POST("/pay", postpaidHandler.Pay)
@@ -332,7 +332,7 @@ func main() {
 
 		// Transfer routes (protected)
 		transfer := v1.Group("/transfer")
-		transfer.Use(middleware.JWTAuth(cfg.JWT.Secret))
+		transfer.Use(middleware.JWTAuth(cfg.JWT.Secret, sessionRepo))
 		{
 			transfer.POST("/inquiry", transferHandler.Inquiry)
 			transfer.POST("/execute", transferHandler.Execute)
@@ -350,7 +350,7 @@ func main() {
 
 		// Vouchers routes (protected)
 		vouchers := v1.Group("/vouchers")
-		vouchers.Use(middleware.JWTAuth(cfg.JWT.Secret))
+		vouchers.Use(middleware.JWTAuth(cfg.JWT.Secret, sessionRepo))
 		{
 			vouchers.GET("", voucherHandler.List)
 			vouchers.GET("/applicable", voucherHandler.GetApplicable)
@@ -359,7 +359,7 @@ func main() {
 
 		// Contacts routes (protected)
 		contacts := v1.Group("/contacts")
-		contacts.Use(middleware.JWTAuth(cfg.JWT.Secret))
+		contacts.Use(middleware.JWTAuth(cfg.JWT.Secret, sessionRepo))
 		{
 			contacts.GET("", contactHandler.List)
 			contacts.POST("", contactHandler.Create)
@@ -380,7 +380,7 @@ func main() {
 
 		// History routes (protected)
 		history := v1.Group("/history")
-		history.Use(middleware.JWTAuth(cfg.JWT.Secret))
+		history.Use(middleware.JWTAuth(cfg.JWT.Secret, sessionRepo))
 		{
 			history.GET("/transactions", historyHandler.List)
 			history.GET("/transactions/:transactionId", historyHandler.GetDetail)
@@ -394,7 +394,7 @@ func main() {
 
 		// Notification routes (protected)
 		notifications := v1.Group("/notifications")
-		notifications.Use(middleware.JWTAuth(cfg.JWT.Secret))
+		notifications.Use(middleware.JWTAuth(cfg.JWT.Secret, sessionRepo))
 		{
 			notifications.GET("", notificationHandler.List)
 			notifications.GET("/unread-count", notificationHandler.GetUnreadCount)
@@ -408,7 +408,7 @@ func main() {
 
 		// KYC routes (protected)
 		kyc := v1.Group("/kyc")
-		kyc.Use(middleware.JWTAuth(cfg.JWT.Secret))
+		kyc.Use(middleware.JWTAuth(cfg.JWT.Secret, sessionRepo))
 		{
 			kyc.GET("/status", kycHandler.GetStatus)
 			kyc.GET("/session", kycHandler.GetSession)
@@ -423,7 +423,7 @@ func main() {
 
 		// Deposit routes (protected)
 		deposit := v1.Group("/deposit")
-		deposit.Use(middleware.JWTAuth(cfg.JWT.Secret))
+		deposit.Use(middleware.JWTAuth(cfg.JWT.Secret, sessionRepo))
 		{
 			deposit.GET("/methods", depositHandler.GetMethods)
 			deposit.POST("/bank-transfer", depositHandler.CreateBankTransfer)
@@ -437,7 +437,7 @@ func main() {
 		}
 
 		sandbox := v1.Group("/sandbox")
-		sandbox.Use(middleware.JWTAuth(cfg.JWT.Secret))
+		sandbox.Use(middleware.JWTAuth(cfg.JWT.Secret, sessionRepo))
 		{
 			sandbox.POST("/checkout", sandboxHandler.Checkout)
 			sandbox.POST("/deposits/:depositId/complete", sandboxHandler.CompleteDeposit)
