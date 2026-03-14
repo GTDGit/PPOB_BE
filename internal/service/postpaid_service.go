@@ -3,13 +3,14 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/GTDGit/PPOB_BE/internal/domain"
 	"github.com/GTDGit/PPOB_BE/internal/external/gerbang"
 	"github.com/GTDGit/PPOB_BE/internal/repository"
+	"github.com/google/uuid"
 )
 
 // PostpaidService handles postpaid business logic
@@ -20,6 +21,7 @@ type PostpaidService struct {
 	userRepo      repository.UserRepository
 	productRepo   repository.ProductRepository
 	gerbangClient *gerbang.Client
+	allowDummy    bool
 }
 
 // NewPostpaidService creates a new postpaid service
@@ -30,6 +32,7 @@ func NewPostpaidService(
 	userRepo repository.UserRepository,
 	productRepo repository.ProductRepository,
 	gerbangClient *gerbang.Client,
+	allowDummy bool,
 ) *PostpaidService {
 	return &PostpaidService{
 		postpaidRepo:  postpaidRepo,
@@ -38,6 +41,7 @@ func NewPostpaidService(
 		userRepo:      userRepo,
 		productRepo:   productRepo,
 		gerbangClient: gerbangClient,
+		allowDummy:    allowDummy,
 	}
 }
 
@@ -68,12 +72,27 @@ func (s *PostpaidService) Inquiry(ctx context.Context, userID, serviceType, targ
 	var adminFee int64
 	var hasBill bool
 	var externalID string
+	var inquiryPeriod string
 
 	if err != nil {
 		// Check if it's a "no bill" error
 		if gerbangErr, ok := err.(*gerbang.Error); ok && gerbangErr.Code == 404 {
 			hasBill = false
 			customerName = ""
+			inquiryPeriod = defaultPostpaidPeriod(period)
+		} else if s.allowDummy {
+			slog.Warn("falling back to dummy postpaid inquiry",
+				slog.String("service_type", serviceType),
+				slog.String("target", target),
+				slog.String("error", err.Error()),
+			)
+
+			hasBill = true
+			customerName = s.dummyPostpaidCustomerName(serviceType, target)
+			billAmount = s.dummyPostpaidAmount(serviceType, target, product)
+			adminFee = product.Admin
+			externalID = buildDummyPaymentID("dummy_inquiry")
+			inquiryPeriod = defaultPostpaidPeriod(period)
 		} else {
 			return nil, fmt.Errorf("provider inquiry failed: %w", err)
 		}
@@ -87,6 +106,7 @@ func (s *PostpaidService) Inquiry(ctx context.Context, userID, serviceType, targ
 			billAmount = gerbangResp.Price
 		}
 		adminFee = gerbangResp.Admin
+		inquiryPeriod = gerbangResp.Period
 	}
 
 	// Create inquiry record
@@ -98,7 +118,7 @@ func (s *PostpaidService) Inquiry(ctx context.Context, userID, serviceType, targ
 		ProviderID:   providerID,
 		CustomerID:   target,
 		CustomerName: customerName,
-		Period:       gerbangResp.Period,
+		Period:       inquiryPeriod,
 		BillAmount:   billAmount,
 		AdminFee:     adminFee,
 		Penalty:      0,
@@ -128,6 +148,9 @@ func (s *PostpaidService) Inquiry(ctx context.Context, userID, serviceType, targ
 	balance, err := s.balanceRepo.FindByUserID(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get balance: %w", err)
+	}
+	if balance == nil {
+		return nil, domain.ErrValidationFailed("Balance not found")
 	}
 
 	// Build response
@@ -305,7 +328,7 @@ func (s *PostpaidService) Pay(ctx context.Context, userID, inquiryID string, vou
 	var inquiryExternalID string
 	if inquiry.ExternalID != nil {
 		inquiryExternalID = *inquiry.ExternalID
-	} else {
+	} else if !s.allowDummy {
 		return nil, domain.ErrServiceUnavailable
 	}
 
@@ -316,7 +339,27 @@ func (s *PostpaidService) Pay(ctx context.Context, userID, inquiryID string, vou
 	var status string
 
 	if err != nil {
-		return nil, fmt.Errorf("provider call failed: %w", err)
+		if !s.allowDummy {
+			return nil, fmt.Errorf("provider call failed: %w", err)
+		}
+
+		slog.Warn("falling back to dummy postpaid payment",
+			slog.String("transaction_id", transactionID),
+			slog.String("inquiry_id", inquiryID),
+			slog.String("service_type", inquiry.ServiceType),
+			slog.String("error", err.Error()),
+		)
+
+		gerbangResp = &gerbang.TransactionResponse{
+			TransactionID: buildDummyReference("POST"),
+			ReferenceID:   transactionID,
+			SKUCode:       product.SKUCode,
+			CustomerNo:    inquiry.Target,
+			CustomerName:  inquiry.CustomerName,
+			Type:          "payment",
+			Status:        gerbang.StatusSuccess,
+			CreatedAt:     time.Now().Format(time.RFC3339),
+		}
 	} else {
 		// Use real Gerbang response
 		externalID = gerbangResp.TransactionID
@@ -329,10 +372,19 @@ func (s *PostpaidService) Pay(ctx context.Context, userID, inquiryID string, vou
 		case gerbang.StatusPending, gerbang.StatusProcessing:
 			status = domain.PostpaidStatusProcessing
 		default:
-			return nil, fmt.Errorf("provider returned unsupported postpaid status: %s", gerbangResp.Status)
+			if !s.allowDummy {
+				return nil, fmt.Errorf("provider returned unsupported postpaid status: %s", gerbangResp.Status)
+			}
+			status = domain.PostpaidStatusSuccess
 		}
 	}
 
+	if status == "" {
+		status = domain.PostpaidStatusSuccess
+	}
+	if externalID == "" {
+		externalID = gerbangResp.TransactionID
+	}
 	referenceNumber := gerbangResp.TransactionID
 
 	// Create transaction record
@@ -500,6 +552,40 @@ func getServiceDisplayName(serviceType string) string {
 	default:
 		return "Tagihan"
 	}
+}
+
+func (s *PostpaidService) dummyPostpaidCustomerName(serviceType, target string) string {
+	label := strings.ToUpper(getServiceDisplayName(serviceType))
+	suffix := target
+	if len(suffix) > 4 {
+		suffix = suffix[len(suffix)-4:]
+	}
+	return fmt.Sprintf("%s %s", label, suffix)
+}
+
+func (s *PostpaidService) dummyPostpaidAmount(serviceType, target string, product *domain.Product) int64 {
+	base := int64(45000)
+	if product != nil && product.Price > 0 {
+		base = product.Price
+	}
+
+	var sum int64
+	for _, char := range target {
+		if char >= '0' && char <= '9' {
+			sum += int64(char - '0')
+		}
+	}
+
+	switch serviceType {
+	case domain.ServicePLNPostpaid:
+		base += 25000
+	case domain.ServicePDAM:
+		base += 15000
+	case domain.ServiceBPJS:
+		base += 10000
+	}
+
+	return base + ((sum % 9) * 5000)
 }
 
 func (s *PostpaidService) findPostpaidProduct(ctx context.Context, serviceType string) (*domain.Product, error) {

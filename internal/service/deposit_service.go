@@ -3,16 +3,17 @@ package service
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
 	"math/big"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/GTDGit/PPOB_BE/internal/domain"
 	"github.com/GTDGit/PPOB_BE/internal/external/gerbang"
 	"github.com/GTDGit/PPOB_BE/internal/repository"
+	"github.com/google/uuid"
 )
 
 // DepositService handles deposit business logic
@@ -21,6 +22,7 @@ type DepositService struct {
 	balanceRepo   repository.BalanceRepository
 	userRepo      repository.UserRepository
 	gerbangClient *gerbang.Client
+	allowDummy    bool
 }
 
 // NewDepositService creates a new deposit service
@@ -29,12 +31,14 @@ func NewDepositService(
 	balanceRepo repository.BalanceRepository,
 	userRepo repository.UserRepository,
 	gerbangClient *gerbang.Client,
+	allowDummy bool,
 ) *DepositService {
 	return &DepositService{
 		depositRepo:   depositRepo,
 		balanceRepo:   balanceRepo,
 		userRepo:      userRepo,
 		gerbangClient: gerbangClient,
+		allowDummy:    allowDummy,
 	}
 }
 
@@ -165,9 +169,23 @@ func (s *DepositService) CreateQRIS(ctx context.Context, userID string, amount i
 	var externalID string
 	var qrisString string
 	var qrisImageURL string
+	var referenceNumber *string
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to create QRIS payment via Gerbang: %w", err)
+		if !s.allowDummy {
+			return nil, fmt.Errorf("failed to create QRIS payment via Gerbang: %w", err)
+		}
+
+		slog.Warn("falling back to dummy QRIS deposit",
+			slog.String("deposit_id", depositID),
+			slog.String("user_id", userID),
+			slog.String("error", err.Error()),
+		)
+
+		externalID = buildDummyPaymentID("dummy_qris")
+		qrisString = buildDummyQRISString(depositID, totalAmount)
+		ref := buildDummyReference("QR")
+		referenceNumber = &ref
 	} else {
 		// Use real Gerbang response
 		externalID = gerbangResp.PaymentID
@@ -177,23 +195,39 @@ func (s *DepositService) CreateQRIS(ctx context.Context, userID string, amount i
 		if qrisImg, ok := gerbangResp.PaymentDetail["qrImageUrl"].(string); ok {
 			qrisImageURL = qrisImg
 		}
+		if ref, ok := gerbangResp.PaymentDetail["providerReferenceNo"].(string); ok && ref != "" {
+			referenceNumber = &ref
+		}
 	}
 
 	extIDPtr := externalID
+	referenceValue := ""
+	if referenceNumber != nil {
+		referenceValue = *referenceNumber
+	}
+	paymentData := s.mustMarshalPaymentData(map[string]interface{}{
+		"qrisString":    qrisString,
+		"qrisImageUrl":  qrisImageURL,
+		"referenceNo":   referenceValue,
+		"integration":   s.integrationMode(externalID),
+		"paymentMethod": domain.DepositMethodQRIS,
+	})
 	// Create deposit
 	deposit := &domain.Deposit{
-		ID:          depositID,
-		UserID:      userID,
-		Method:      domain.DepositMethodQRIS,
-		Amount:      amount,
-		AdminFee:    adminFee,
-		UniqueCode:  0,
-		TotalAmount: totalAmount,
-		Status:      domain.DepositStatusPending,
-		ExternalID:  &extIDPtr,
-		ExpiresAt:   time.Now().Add(30 * time.Minute),
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		ID:              depositID,
+		UserID:          userID,
+		Method:          domain.DepositMethodQRIS,
+		Amount:          amount,
+		AdminFee:        adminFee,
+		UniqueCode:      0,
+		TotalAmount:     totalAmount,
+		Status:          domain.DepositStatusPending,
+		PaymentData:     &paymentData,
+		ExternalID:      &extIDPtr,
+		ReferenceNumber: referenceNumber,
+		ExpiresAt:       time.Now().Add(30 * time.Minute),
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
 	}
 
 	if err := s.depositRepo.Create(ctx, deposit); err != nil {
@@ -292,34 +326,64 @@ func (s *DepositService) CreateRetail(ctx context.Context, userID, providerCode 
 
 	var externalID string
 	var paymentCode string
+	var referenceNumber *string
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to create retail payment via Gerbang: %w", err)
+		if !s.allowDummy {
+			return nil, fmt.Errorf("failed to create retail payment via Gerbang: %w", err)
+		}
+
+		slog.Warn("falling back to dummy retail deposit",
+			slog.String("deposit_id", depositID),
+			slog.String("provider_code", providerCode),
+			slog.String("error", err.Error()),
+		)
+
+		externalID = buildDummyPaymentID("dummy_retail")
+		paymentCode = buildDummyPaymentCode(providerCode, depositID)
+		ref := buildDummyReference("RTL")
+		referenceNumber = &ref
 	} else {
 		// Use real Gerbang response
 		externalID = gerbangResp.PaymentID
 		if code, ok := gerbangResp.PaymentDetail["paymentCode"].(string); ok {
 			paymentCode = code
 		}
+		if ref, ok := gerbangResp.PaymentDetail["providerReferenceNo"].(string); ok && ref != "" {
+			referenceNumber = &ref
+		}
 	}
 
 	provCode := providerCode
 	extIDPtr := externalID
+	referenceValue := ""
+	if referenceNumber != nil {
+		referenceValue = *referenceNumber
+	}
+	paymentData := s.mustMarshalPaymentData(map[string]interface{}{
+		"providerCode": providerCode,
+		"providerName": provider.Name,
+		"paymentCode":  paymentCode,
+		"referenceNo":  referenceValue,
+		"integration":  s.integrationMode(externalID),
+	})
 	// Create deposit
 	deposit := &domain.Deposit{
-		ID:           depositID,
-		UserID:       userID,
-		Method:       domain.DepositMethodRetail,
-		ProviderCode: &provCode,
-		Amount:       amount,
-		AdminFee:     adminFee,
-		UniqueCode:   0,
-		TotalAmount:  totalAmount,
-		Status:       domain.DepositStatusPending,
-		ExternalID:   &extIDPtr,
-		ExpiresAt:    time.Now().Add(24 * time.Hour),
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
+		ID:              depositID,
+		UserID:          userID,
+		Method:          domain.DepositMethodRetail,
+		ProviderCode:    &provCode,
+		Amount:          amount,
+		AdminFee:        adminFee,
+		UniqueCode:      0,
+		TotalAmount:     totalAmount,
+		Status:          domain.DepositStatusPending,
+		PaymentData:     &paymentData,
+		ExternalID:      &extIDPtr,
+		ReferenceNumber: referenceNumber,
+		ExpiresAt:       time.Now().Add(24 * time.Hour),
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
 	}
 
 	if err := s.depositRepo.Create(ctx, deposit); err != nil {
@@ -420,34 +484,64 @@ func (s *DepositService) CreateVA(ctx context.Context, userID, bankCode string, 
 
 	var externalID string
 	var vaNumber string
+	var referenceNumber *string
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to create VA payment via Gerbang: %w", err)
+		if !s.allowDummy {
+			return nil, fmt.Errorf("failed to create VA payment via Gerbang: %w", err)
+		}
+
+		slog.Warn("falling back to dummy VA deposit",
+			slog.String("deposit_id", depositID),
+			slog.String("bank_code", bankCode),
+			slog.String("error", err.Error()),
+		)
+
+		externalID = buildDummyPaymentID("dummy_va")
+		vaNumber = buildDummyVANumber(bankCode, userID)
+		ref := buildDummyReference("VA")
+		referenceNumber = &ref
 	} else {
 		// Use real Gerbang response
 		externalID = gerbangResp.PaymentID
 		if vaNum, ok := gerbangResp.PaymentDetail["vaNumber"].(string); ok {
 			vaNumber = vaNum
 		}
+		if ref, ok := gerbangResp.PaymentDetail["providerReferenceNo"].(string); ok && ref != "" {
+			referenceNumber = &ref
+		}
 	}
 
 	bankCodeStr := bankCode
 	extIDPtr := externalID
+	referenceValue := ""
+	if referenceNumber != nil {
+		referenceValue = *referenceNumber
+	}
+	paymentData := s.mustMarshalPaymentData(map[string]interface{}{
+		"bankCode":    bankCode,
+		"bankName":    bank.Name,
+		"vaNumber":    vaNumber,
+		"referenceNo": referenceValue,
+		"integration": s.integrationMode(externalID),
+	})
 	// Create deposit
 	deposit := &domain.Deposit{
-		ID:          depositID,
-		UserID:      userID,
-		Method:      domain.DepositMethodVirtualAccount,
-		BankCode:    &bankCodeStr,
-		Amount:      amount,
-		AdminFee:    adminFee,
-		UniqueCode:  0,
-		TotalAmount: totalAmount,
-		Status:      domain.DepositStatusPending,
-		ExternalID:  &extIDPtr,
-		ExpiresAt:   time.Now().Add(24 * time.Hour),
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		ID:              depositID,
+		UserID:          userID,
+		Method:          domain.DepositMethodVirtualAccount,
+		BankCode:        &bankCodeStr,
+		Amount:          amount,
+		AdminFee:        adminFee,
+		UniqueCode:      0,
+		TotalAmount:     totalAmount,
+		Status:          domain.DepositStatusPending,
+		PaymentData:     &paymentData,
+		ExternalID:      &extIDPtr,
+		ReferenceNumber: referenceNumber,
+		ExpiresAt:       time.Now().Add(24 * time.Hour),
+		CreatedAt:       time.Now(),
+		UpdatedAt:       time.Now(),
 	}
 
 	if err := s.depositRepo.Create(ctx, deposit); err != nil {
@@ -658,11 +752,85 @@ func (s *DepositService) toDepositDetail(deposit *domain.Deposit) *domain.Deposi
 		TotalAmountFormatted: formatDepositCurrency(deposit.TotalAmount),
 		Status:               deposit.Status,
 		StatusLabel:          getDepositStatusLabel(deposit.Status),
+		PaymentInfo:          s.paymentInfoFromDeposit(deposit),
 		ExpiresAt:            deposit.ExpiresAt.Format(time.RFC3339),
 		ExpiresAtFormatted:   formatDepositDate(deposit.ExpiresAt),
 		PaidAt:               paidAt,
 		CreatedAt:            deposit.CreatedAt.Format(time.RFC3339),
 	}
+}
+
+func (s *DepositService) paymentInfoFromDeposit(deposit *domain.Deposit) interface{} {
+	switch deposit.Method {
+	case domain.DepositMethodBankTransfer:
+		return &domain.BankTransferPayment{
+			TotalTransfer:          deposit.TotalAmount,
+			TotalTransferFormatted: formatDepositCurrency(deposit.TotalAmount),
+			UniqueCode:             deposit.UniqueCode,
+			ValidUntil:             deposit.ExpiresAt.Format(time.RFC3339),
+			ValidUntilFormatted:    formatDepositDate(deposit.ExpiresAt),
+		}
+	case domain.DepositMethodQRIS:
+		data := s.parsePaymentData(deposit.PaymentData)
+		return &domain.QRISPayment{
+			QRISString:          data["qrisString"],
+			QRISImageURL:        data["qrisImageUrl"],
+			ValidUntil:          deposit.ExpiresAt.Format(time.RFC3339),
+			ValidUntilFormatted: formatDepositDate(deposit.ExpiresAt),
+		}
+	case domain.DepositMethodRetail:
+		data := s.parsePaymentData(deposit.PaymentData)
+		return &domain.RetailPayment{
+			ProviderCode:        data["providerCode"],
+			ProviderName:        data["providerName"],
+			PaymentCode:         data["paymentCode"],
+			ValidUntil:          deposit.ExpiresAt.Format(time.RFC3339),
+			ValidUntilFormatted: formatDepositDate(deposit.ExpiresAt),
+		}
+	case domain.DepositMethodVirtualAccount:
+		data := s.parsePaymentData(deposit.PaymentData)
+		return &domain.VAPayment{
+			BankCode:            data["bankCode"],
+			BankName:            data["bankName"],
+			VANumber:            data["vaNumber"],
+			ValidUntil:          deposit.ExpiresAt.Format(time.RFC3339),
+			ValidUntilFormatted: formatDepositDate(deposit.ExpiresAt),
+		}
+	default:
+		return nil
+	}
+}
+
+func (s *DepositService) parsePaymentData(raw *string) map[string]string {
+	result := map[string]string{}
+	if raw == nil || *raw == "" {
+		return result
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(*raw), &payload); err != nil {
+		return result
+	}
+	for key, value := range payload {
+		result[key] = stringFromAny(value)
+	}
+	return result
+}
+
+func (s *DepositService) mustMarshalPaymentData(data map[string]interface{}) string {
+	encoded, err := json.Marshal(data)
+	if err != nil {
+		slog.Error("failed to marshal payment data", slog.String("error", err.Error()))
+		return "{}"
+	}
+	return string(encoded)
+}
+
+func (s *DepositService) integrationMode(externalID string) string {
+	if externalID == "" || len(externalID) >= 6 && externalID[:6] == "dummy_" {
+		return "dummy"
+	}
+	return "real"
 }
 
 func (s *DepositService) toDepositSummary(deposit *domain.Deposit) *domain.DepositSummary {

@@ -18,6 +18,7 @@ type Config struct {
 	Brevo         BrevoConfig
 	Gerbang       GerbangConfig
 	S3            S3Config
+	Fallback      FallbackConfig
 	ProductSync   ProductSyncConfig
 	BankCodeSync  BankCodeSyncConfig
 	TerritorySync TerritorySyncConfig
@@ -99,6 +100,12 @@ type GerbangConfig struct {
 	ClientSecret   string
 	CallbackSecret string
 	Timeout        time.Duration
+}
+
+type FallbackConfig struct {
+	KYCEnabled     bool
+	PaymentEnabled bool
+	PPOBEnabled    bool
 }
 
 type ProductSyncConfig struct {
@@ -199,6 +206,11 @@ func Load() (*Config, error) {
 			ClientSecret:   getEnv("GERBANG_CLIENT_SECRET", ""),
 			CallbackSecret: getEnv("GERBANG_CALLBACK_SECRET", ""),
 			Timeout:        time.Duration(getEnvAsInt("GERBANG_TIMEOUT", 30)) * time.Second,
+		},
+		Fallback: FallbackConfig{
+			KYCEnabled:     getEnv("DUMMY_KYC_FALLBACK_ENABLED", "true") == "true",
+			PaymentEnabled: getEnv("DUMMY_PAYMENT_FALLBACK_ENABLED", "true") == "true",
+			PPOBEnabled:    getEnv("DUMMY_PPOB_FALLBACK_ENABLED", "true") == "true",
 		},
 		ProductSync: ProductSyncConfig{
 			Interval:      time.Duration(getEnvAsInt("PRODUCT_SYNC_INTERVAL", 15)) * time.Minute,

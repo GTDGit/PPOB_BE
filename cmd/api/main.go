@@ -115,6 +115,7 @@ func main() {
 		userRepo,
 		productRepo,
 		gerbangClient,
+		cfg.Fallback.PPOBEnabled,
 	)
 	postpaidService := service.NewPostpaidService(
 		postpaidRepo,
@@ -123,6 +124,7 @@ func main() {
 		userRepo,
 		productRepo,
 		gerbangClient,
+		cfg.Fallback.PPOBEnabled,
 	)
 	transferService := service.NewTransferService(
 		transferRepo,
@@ -138,9 +140,9 @@ func main() {
 	userService := service.NewUserService(userRepo, balanceRepo, settingsRepo)
 	historyService := service.NewHistoryService(historyRepo)
 	notificationService := service.NewNotificationService(notificationRepo)
-	depositService := service.NewDepositService(depositRepo, balanceRepo, userRepo, gerbangClient)
+	depositService := service.NewDepositService(depositRepo, balanceRepo, userRepo, gerbangClient, cfg.Fallback.PaymentEnabled)
 	territoryService := service.NewTerritoryService(territoryRepo)
-	kycService := service.NewKYCService(kycRepo, userRepo, gerbangClient, s3Client)
+	kycService := service.NewKYCService(kycRepo, userRepo, gerbangClient, s3Client, cfg.Fallback.KYCEnabled)
 	sandboxService := service.NewSandboxService(historyRepo, balanceRepo, depositRepo, notificationRepo)
 
 	// Initialize handlers

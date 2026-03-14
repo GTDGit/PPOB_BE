@@ -1,12 +1,13 @@
 package handler
 
 import (
+	"io"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
 	"github.com/GTDGit/PPOB_BE/internal/domain"
 	"github.com/GTDGit/PPOB_BE/internal/middleware"
 	"github.com/GTDGit/PPOB_BE/internal/service"
+	"github.com/gin-gonic/gin"
 )
 
 // KYCHandler handles KYC verification HTTP requests
@@ -126,8 +127,8 @@ func (h *KYCHandler) UploadKTP(c *gin.Context) {
 	defer fileContent.Close()
 
 	// Read file bytes
-	fileBytes := make([]byte, file.Size)
-	if _, err := fileContent.Read(fileBytes); err != nil {
+	fileBytes, err := io.ReadAll(fileContent)
+	if err != nil {
 		respondWithError(c, domain.ErrInvalidRequestError)
 		return
 	}
@@ -176,8 +177,8 @@ func (h *KYCHandler) UploadFacePhotos(c *gin.Context) {
 	}
 	defer faceContent.Close()
 
-	faceBytes := make([]byte, faceFile.Size)
-	if _, err := faceContent.Read(faceBytes); err != nil {
+	faceBytes, err := io.ReadAll(faceContent)
+	if err != nil {
 		respondWithError(c, domain.ErrInvalidRequestError)
 		return
 	}
@@ -190,8 +191,8 @@ func (h *KYCHandler) UploadFacePhotos(c *gin.Context) {
 	}
 	defer fullImageContent.Close()
 
-	fullImageBytes := make([]byte, fullImageFile.Size)
-	if _, err := fullImageContent.Read(fullImageBytes); err != nil {
+	fullImageBytes, err := io.ReadAll(fullImageContent)
+	if err != nil {
 		respondWithError(c, domain.ErrInvalidRequestError)
 		return
 	}
