@@ -86,15 +86,17 @@ func (s *AuthService) StartAuth(ctx context.Context, req StartAuthRequest) (*dom
 		flow = domain.FlowLogin
 
 		// Check if device is recognized
-		device, _ := s.deviceRepo.FindByUserIDAndDeviceID(ctx, user.ID, req.DeviceID)
-		if device != nil && device.IsActive {
-			// Device recognized - can use PIN login directly
-			return &domain.StartAuthResponse{
-				Step:        domain.StepInputPIN,
-				Flow:        flow,
-				MaskedPhone: validator.MaskPhone(phone),
-				UserName:    stringPtr(user.GetDisplayName()),
-			}, nil
+		if !s.otpService.IsTestPhone(phone) {
+			device, _ := s.deviceRepo.FindByUserIDAndDeviceID(ctx, user.ID, req.DeviceID)
+			if device != nil && device.IsActive {
+				// Device recognized - can use PIN login directly
+				return &domain.StartAuthResponse{
+					Step:        domain.StepInputPIN,
+					Flow:        flow,
+					MaskedPhone: validator.MaskPhone(phone),
+					UserName:    stringPtr(user.GetDisplayName()),
+				}, nil
+			}
 		}
 	}
 

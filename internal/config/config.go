@@ -65,6 +65,9 @@ type OTPConfig struct {
 	MaxAttempts    int
 	MaxResend      int
 	ResendCooldown time.Duration
+	TestEnabled    bool
+	TestPhone      string
+	TestOTP        string
 }
 
 type WhatsAppConfig struct {
@@ -183,6 +186,9 @@ func Load() (*Config, error) {
 			MaxAttempts:    getEnvAsInt("OTP_MAX_ATTEMPTS", 5),
 			MaxResend:      getEnvAsInt("OTP_MAX_RESEND", 3),
 			ResendCooldown: time.Duration(getEnvAsInt("OTP_RESEND_COOLDOWN", 60)) * time.Second,
+			TestEnabled:    getEnv("OTP_TEST_ENABLED", "false") == "true",
+			TestPhone:      getEnv("OTP_TEST_PHONE", ""),
+			TestOTP:        getEnv("OTP_TEST_CODE", ""),
 		},
 		WhatsApp: WhatsAppConfig{
 			APIURL:              getEnv("WA_API_URL", "https://graph.facebook.com/v24.0"),

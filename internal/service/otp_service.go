@@ -79,6 +79,10 @@ func (s *OTPService) SendOTP(ctx context.Context, req SendOTPRequest) (*SendOTPR
 	// Normalize phone number
 	phone := validator.NormalizePhone(req.Phone)
 
+	if s.IsTestPhone(phone) {
+		return s.sendTestOTP(ctx, phone, req)
+	}
+
 	// Check rate limit
 	if err := s.checkRateLimit(ctx, phone); err != nil {
 		return nil, err
@@ -239,6 +243,10 @@ func (s *OTPService) ResendOTP(ctx context.Context, phone, sessionID, otpMethod 
 	// Normalize phone
 	phone = validator.NormalizePhone(phone)
 
+	if s.IsTestPhone(phone) {
+		return s.resendTestOTP(ctx, phone, sessionID, otpMethod)
+	}
+
 	// Check rate limit
 	if err := s.checkRateLimit(ctx, phone); err != nil {
 		return nil, err
@@ -363,6 +371,101 @@ func (s *OTPService) GetTempToken(ctx context.Context, token string) (*domain.Te
 	}
 
 	return &tempToken, nil
+}
+
+// IsTestPhone reports whether the supplied phone uses the review OTP bypass flow.
+func (s *OTPService) IsTestPhone(phone string) bool {
+	if !s.cfg.TestEnabled {
+		return false
+	}
+	if !validator.ValidateOTP(s.cfg.TestOTP) {
+		return false
+	}
+	if !validator.ValidatePhone(s.cfg.TestPhone) {
+		return false
+	}
+
+	return validator.NormalizePhone(phone) == validator.NormalizePhone(s.cfg.TestPhone)
+}
+
+func (s *OTPService) sendTestOTP(ctx context.Context, phone string, req SendOTPRequest) (*SendOTPResponse, error) {
+	sessionID := "otp_" + uuid.New().String()[:12]
+	now := time.Now()
+	channel := req.OTPMethod
+	if channel == "" {
+		channel = domain.OTPMethodWA
+	}
+
+	session := &domain.OTPSession{
+		SessionID:   sessionID,
+		Phone:       phone,
+		OTP:         s.cfg.TestOTP,
+		OTPMethod:   channel,
+		Flow:        req.Flow,
+		Attempts:    0,
+		MaxAttempts: s.cfg.MaxAttempts,
+		DeviceID:    req.DeviceID,
+		DeviceName:  "",
+		IPAddress:   req.IPAddress,
+		ExpiresAt:   now.Add(s.cfg.TTL),
+		CreatedAt:   now,
+	}
+
+	key := redis.OTPSessionKey(phone, sessionID)
+	if err := s.redisClient.SetJSON(ctx, key, session, s.cfg.TTL); err != nil {
+		return nil, fmt.Errorf("failed to store test OTP session: %w", err)
+	}
+
+	slog.Info("review OTP session created",
+		slog.String("phone_masked", maskPhone(phone)),
+		slog.String("session_id", sessionID),
+	)
+
+	return &SendOTPResponse{
+		SessionID:    sessionID,
+		Phone:        validator.MaskPhone(phone),
+		ExpiresIn:    int(s.cfg.TTL.Seconds()),
+		ResendIn:     int(s.cfg.ResendCooldown.Seconds()),
+		AttemptsLeft: s.cfg.MaxAttempts,
+		Channel:      channel,
+		ResendCount:  1,
+	}, nil
+}
+
+func (s *OTPService) resendTestOTP(ctx context.Context, phone, sessionID, otpMethod string) (*SendOTPResponse, error) {
+	key := redis.OTPSessionKey(phone, sessionID)
+	var session domain.OTPSession
+	if err := s.redisClient.GetJSON(ctx, key, &session); err != nil {
+		return nil, domain.ErrOTPInvalid
+	}
+
+	channel := otpMethod
+	if channel == "" {
+		channel = session.OTPMethod
+	}
+	if channel == "" {
+		channel = domain.OTPMethodWA
+	}
+
+	session.OTP = s.cfg.TestOTP
+	session.Attempts = 0
+	session.ResendCount++
+	session.OTPMethod = channel
+	session.ExpiresAt = time.Now().Add(s.cfg.TTL)
+
+	if err := s.redisClient.SetJSON(ctx, key, &session, s.cfg.TTL); err != nil {
+		return nil, fmt.Errorf("failed to update test OTP session: %w", err)
+	}
+
+	return &SendOTPResponse{
+		SessionID:    sessionID,
+		Phone:        validator.MaskPhone(phone),
+		ExpiresIn:    int(s.cfg.TTL.Seconds()),
+		ResendIn:     int(s.cfg.ResendCooldown.Seconds()),
+		AttemptsLeft: s.cfg.MaxAttempts,
+		Channel:      channel,
+		ResendCount:  session.ResendCount,
+	}, nil
 }
 
 // CreateTempToken creates a new temporary token
