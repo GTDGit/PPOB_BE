@@ -4,8 +4,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/GTDGit/PPOB_BE/internal/domain"
 	"github.com/GTDGit/PPOB_BE/internal/service"
+	"github.com/gin-gonic/gin"
 )
 
 // ProductHandler handles product-related requests
@@ -75,6 +76,12 @@ func (h *ProductHandler) GetPDAMRegions(c *gin.Context) {
 func (h *ProductHandler) GetBanks(c *gin.Context) {
 	// Get filter type from query param
 	filterType := c.DefaultQuery("type", "all")
+	switch filterType {
+	case "all", "popular", "transfer_supported":
+	default:
+		respondWithError(c, domain.ErrValidationFailed("Parameter type tidak valid. Gunakan all, popular, atau transfer_supported"))
+		return
+	}
 
 	banks, err := h.productService.GetBanks(c.Request.Context(), filterType)
 	if err != nil {
