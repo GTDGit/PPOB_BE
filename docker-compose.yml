@@ -24,6 +24,7 @@ services:
       - ppob_network
     volumes:
       - ./logs:/app/logs
+      - ./secrets:/app/secrets:ro
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--output-document=/dev/null", "http://localhost:8080/health"]
       interval: 30s

@@ -16,6 +16,7 @@ type Config struct {
 	WhatsApp      WhatsAppConfig
 	Fazpass       FazpassConfig
 	Brevo         BrevoConfig
+	Firebase      FirebaseConfig
 	Gerbang       GerbangConfig
 	S3            S3Config
 	Fallback      FallbackConfig
@@ -94,6 +95,12 @@ type BrevoConfig struct {
 	TemplatePINChanged   int64  // PIN changed alert template ID
 	TemplateEmailChanged int64  // Email changed alert template ID
 	TemplatePhoneChanged int64  // Phone changed alert template ID
+}
+
+type FirebaseConfig struct {
+	Enabled            bool
+	ProjectID          string
+	ServiceAccountPath string
 }
 
 type GerbangConfig struct {
@@ -203,6 +210,11 @@ func Load() (*Config, error) {
 			TemplatePINChanged:   int64(getEnvAsInt("BREVO_TEMPLATE_PIN_CHANGED", 3)),
 			TemplateEmailChanged: int64(getEnvAsInt("BREVO_TEMPLATE_EMAIL_CHANGED", 4)),
 			TemplatePhoneChanged: int64(getEnvAsInt("BREVO_TEMPLATE_PHONE_CHANGED", 5)),
+		},
+		Firebase: FirebaseConfig{
+			Enabled:            getEnv("FIREBASE_ENABLED", "false") == "true",
+			ProjectID:          getEnv("FIREBASE_PROJECT_ID", ""),
+			ServiceAccountPath: getEnv("FIREBASE_SERVICE_ACCOUNT_PATH", ""),
 		},
 		Gerbang: GerbangConfig{
 			BaseURL:        getEnv("GERBANG_BASE_URL", "https://api.gtd.co.id"),

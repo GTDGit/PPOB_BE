@@ -15,6 +15,7 @@ type NotificationRepository interface {
 	FindByUserID(ctx context.Context, userID string, filter NotificationFilter) ([]*domain.Notification, int, error)
 	FindByID(ctx context.Context, id string) (*domain.Notification, error)
 	FindByUserAndID(ctx context.Context, userID, id string) (*domain.Notification, error)
+	FindActivePushTokensByUserID(ctx context.Context, userID string) ([]*domain.PushToken, error)
 	CountUnread(ctx context.Context, userID string) (int, error)
 	CountUnreadByCategory(ctx context.Context, userID string) (map[string]int, error)
 	MarkAsRead(ctx context.Context, id string) error
@@ -126,6 +127,23 @@ func (r *notificationRepository) FindByUserAndID(ctx context.Context, userID, id
 	}
 
 	return &notif, nil
+}
+
+// FindActivePushTokensByUserID returns active push tokens for the user.
+func (r *notificationRepository) FindActivePushTokensByUserID(ctx context.Context, userID string) ([]*domain.PushToken, error) {
+	query := `
+		SELECT id, user_id, device_id, token, platform, is_active, created_at, updated_at
+		FROM push_tokens
+		WHERE user_id = $1 AND is_active = true
+		ORDER BY updated_at DESC
+	`
+
+	var tokens []*domain.PushToken
+	if err := r.db.SelectContext(ctx, &tokens, query, userID); err != nil {
+		return nil, err
+	}
+
+	return tokens, nil
 }
 
 // CountUnread counts unread notifications for a user.

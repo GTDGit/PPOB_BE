@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/GTDGit/PPOB_BE/internal/config"
+	"github.com/GTDGit/PPOB_BE/internal/external/firebase"
 	"github.com/GTDGit/PPOB_BE/internal/external/gerbang"
 	"github.com/GTDGit/PPOB_BE/internal/external/s3"
 	"github.com/GTDGit/PPOB_BE/internal/handler"
@@ -95,6 +96,17 @@ func main() {
 		log.Fatalf("Failed to initialize S3 client: %v", err)
 	}
 
+	var firebaseClient *firebase.Client
+	if cfg.Firebase.Enabled {
+		firebaseClient, err = firebase.NewClient(cfg.Firebase)
+		if err != nil {
+			log.Fatalf("Failed to initialize Firebase client: %v", err)
+		}
+		logger.Info("firebase push client enabled")
+	} else {
+		logger.Info("firebase push client disabled")
+	}
+
 	// Initialize services
 	otpService := service.NewOTPService(rdb, cfg.OTP, cfg.WhatsApp, cfg.Fazpass)
 	emailService := service.NewEmailService(cfg.Brevo)
@@ -139,11 +151,11 @@ func main() {
 	homeService := service.NewHomeService(homeRepo, userRepo, balanceRepo, notificationRepo)
 	userService := service.NewUserService(userRepo, balanceRepo, settingsRepo)
 	historyService := service.NewHistoryService(historyRepo)
-	notificationService := service.NewNotificationService(notificationRepo)
+	notificationService := service.NewNotificationService(notificationRepo, firebaseClient)
 	depositService := service.NewDepositService(depositRepo, balanceRepo, userRepo, gerbangClient, cfg.Fallback.PaymentEnabled)
 	territoryService := service.NewTerritoryService(territoryRepo)
 	kycService := service.NewKYCService(kycRepo, userRepo, gerbangClient, s3Client, cfg.Fallback.KYCEnabled)
-	sandboxService := service.NewSandboxService(historyRepo, balanceRepo, depositRepo, notificationRepo)
+	sandboxService := service.NewSandboxService(historyRepo, balanceRepo, depositRepo, notificationService)
 
 	// Initialize handlers
 	authHandler := handler.NewAuthHandler(authService)

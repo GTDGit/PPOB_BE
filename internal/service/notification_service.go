@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/GTDGit/PPOB_BE/internal/domain"
+	"github.com/GTDGit/PPOB_BE/internal/external/firebase"
 	"github.com/GTDGit/PPOB_BE/internal/repository"
 	"github.com/google/uuid"
 )
@@ -16,12 +17,14 @@ import (
 // NotificationService handles notification business logic
 type NotificationService struct {
 	notificationRepo repository.NotificationRepository
+	pushClient       *firebase.Client
 }
 
 // NewNotificationService creates a new notification service
-func NewNotificationService(notificationRepo repository.NotificationRepository) *NotificationService {
+func NewNotificationService(notificationRepo repository.NotificationRepository, pushClient *firebase.Client) *NotificationService {
 	return &NotificationService{
 		notificationRepo: notificationRepo,
+		pushClient:       pushClient,
 	}
 }
 
@@ -235,7 +238,91 @@ func (s *NotificationService) DeactivatePushToken(ctx context.Context, userID, d
 	}, nil
 }
 
+// CreateSystemNotification persists a notification and optionally fan-outs push delivery.
+func (s *NotificationService) CreateSystemNotification(ctx context.Context, userID, category, title, body string, metadata map[string]string) error {
+	var metadataJSON *string
+	if len(metadata) > 0 {
+		raw, err := json.Marshal(metadata)
+		if err != nil {
+			return fmt.Errorf("failed to marshal notification metadata: %w", err)
+		}
+		text := string(raw)
+		metadataJSON = &text
+	}
+
+	shortBody := body
+	if len(shortBody) > 120 {
+		shortBody = shortBody[:117] + "..."
+	}
+
+	now := time.Now()
+	notif := &domain.Notification{
+		ID:        "notif_" + uuid.New().String()[:8],
+		UserID:    userID,
+		Category:  category,
+		Title:     title,
+		Body:      body,
+		ShortBody: &shortBody,
+		Metadata:  metadataJSON,
+		IsRead:    false,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	if err := s.notificationRepo.Create(ctx, notif); err != nil {
+		return fmt.Errorf("failed to create notification: %w", err)
+	}
+
+	s.dispatchPush(ctx, notif, metadata)
+	return nil
+}
+
 // Helper functions
+
+func (s *NotificationService) dispatchPush(ctx context.Context, notif *domain.Notification, metadata map[string]string) {
+	if s.pushClient == nil || !s.pushClient.IsEnabled() {
+		return
+	}
+
+	tokens, err := s.notificationRepo.FindActivePushTokensByUserID(ctx, notif.UserID)
+	if err != nil {
+		slog.Warn("failed to load push tokens",
+			slog.String("user_id", notif.UserID),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+	if len(tokens) == 0 {
+		return
+	}
+
+	data := map[string]string{
+		"notificationId": notif.ID,
+		"category":       notif.Category,
+		"title":          notif.Title,
+		"body":           notif.Body,
+	}
+	for key, value := range metadata {
+		data[key] = value
+	}
+
+	for _, token := range tokens {
+		err := s.pushClient.Send(ctx, firebase.SendRequest{
+			Token: token.Token,
+			Title: notif.Title,
+			Body:  notif.Body,
+			Data:  data,
+		})
+		if err != nil {
+			slog.Warn("failed to send push notification",
+				slog.String("user_id", notif.UserID),
+				slog.String("device_id", token.DeviceID),
+				slog.String("platform", token.Platform),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+}
 
 func (s *NotificationService) toNotificationSummary(notif *domain.Notification) *domain.NotificationSummary {
 	shortBody := truncateBody(notif.Body, 50)

@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -14,10 +13,10 @@ import (
 
 // SandboxService provides safe dummy flows for app testing.
 type SandboxService struct {
-	historyRepo      repository.HistoryRepository
-	balanceRepo      repository.BalanceRepository
-	depositRepo      repository.DepositRepository
-	notificationRepo repository.NotificationRepository
+	historyRepo     repository.HistoryRepository
+	balanceRepo     repository.BalanceRepository
+	depositRepo     repository.DepositRepository
+	notificationSvc *NotificationService
 }
 
 // SandboxCheckoutRequest represents a dummy checkout request.
@@ -37,13 +36,13 @@ func NewSandboxService(
 	historyRepo repository.HistoryRepository,
 	balanceRepo repository.BalanceRepository,
 	depositRepo repository.DepositRepository,
-	notificationRepo repository.NotificationRepository,
+	notificationSvc *NotificationService,
 ) *SandboxService {
 	return &SandboxService{
-		historyRepo:      historyRepo,
-		balanceRepo:      balanceRepo,
-		depositRepo:      depositRepo,
-		notificationRepo: notificationRepo,
+		historyRepo:     historyRepo,
+		balanceRepo:     balanceRepo,
+		depositRepo:     depositRepo,
+		notificationSvc: notificationSvc,
 	}
 }
 
@@ -231,40 +230,10 @@ func (s *SandboxService) completeDepositWithBalance(ctx context.Context, deposit
 }
 
 func (s *SandboxService) createNotification(ctx context.Context, userID, category, title, body string, metadata map[string]string) error {
-	var metadataJSON *string
-	if len(metadata) > 0 {
-		raw, err := json.Marshal(metadata)
-		if err != nil {
-			return fmt.Errorf("failed to marshal notification metadata: %w", err)
-		}
-		text := string(raw)
-		metadataJSON = &text
+	if s.notificationSvc == nil {
+		return nil
 	}
-
-	shortBody := body
-	if len(shortBody) > 120 {
-		shortBody = shortBody[:117] + "..."
-	}
-
-	now := time.Now()
-	notif := &domain.Notification{
-		ID:        "notif_" + uuid.New().String()[:8],
-		UserID:    userID,
-		Category:  category,
-		Title:     title,
-		Body:      body,
-		ShortBody: &shortBody,
-		Metadata:  metadataJSON,
-		IsRead:    false,
-		CreatedAt: now,
-		UpdatedAt: now,
-	}
-
-	if err := s.notificationRepo.Create(ctx, notif); err != nil {
-		return fmt.Errorf("failed to create notification: %w", err)
-	}
-
-	return nil
+	return s.notificationSvc.CreateSystemNotification(ctx, userID, category, title, body, metadata)
 }
 
 func normalizeSandboxTypes(transactionType, serviceType, productName string) (string, string) {

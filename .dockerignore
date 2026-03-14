@@ -56,3 +56,4 @@ bin/
 
 # Docker
 docker-compose.override.yml
+secrets/
