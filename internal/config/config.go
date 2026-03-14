@@ -72,6 +72,8 @@ type WhatsAppConfig struct {
 	AccessToken         string
 	OTPTemplateName     string
 	OTPTemplateLanguage string
+	OTPButtonSubType    string
+	OTPButtonIndex      string
 }
 
 type FazpassConfig struct {
@@ -181,6 +183,8 @@ func Load() (*Config, error) {
 			AccessToken:         getEnv("WA_ACCESS_TOKEN", ""),
 			OTPTemplateName:     getEnv("WA_OTP_TEMPLATE_NAME", "otp_verification"),
 			OTPTemplateLanguage: getEnv("WA_OTP_TEMPLATE_LANGUAGE", "id"),
+			OTPButtonSubType:    getEnv("WA_OTP_BUTTON_SUBTYPE", ""),
+			OTPButtonIndex:      getEnv("WA_OTP_BUTTON_INDEX", "0"),
 		},
 		Fazpass: FazpassConfig{
 			APIURL:      getEnv("FAZPASS_API_URL", "https://api.fazpass.com"),

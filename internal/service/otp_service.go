@@ -8,13 +8,13 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/GTDGit/PPOB_BE/internal/config"
 	"github.com/GTDGit/PPOB_BE/internal/domain"
 	"github.com/GTDGit/PPOB_BE/internal/external/fazpass"
 	"github.com/GTDGit/PPOB_BE/internal/external/whatsapp"
 	"github.com/GTDGit/PPOB_BE/pkg/redis"
 	"github.com/GTDGit/PPOB_BE/pkg/validator"
+	"github.com/google/uuid"
 )
 
 // OTPService handles OTP generation and verification
@@ -132,6 +132,16 @@ func (s *OTPService) SendOTP(ctx context.Context, req SendOTPRequest) (*SendOTPR
 			OTP:   otp,
 		})
 		if err != nil || !resp.Success {
+			waError := ""
+			if err != nil {
+				waError = err.Error()
+			} else if resp != nil {
+				waError = resp.Error
+			}
+			slog.Warn("OTP WhatsApp failed, falling back to SMS",
+				slog.String("phone_masked", maskPhone(phone)),
+				slog.String("reason", waError),
+			)
 			// Fallback to SMS
 			channel = "sms"
 			if s.fazpassClient.IsEnabled() {
@@ -285,6 +295,16 @@ func (s *OTPService) ResendOTP(ctx context.Context, phone, sessionID, otpMethod 
 				OTP:   otp,
 			})
 			if err != nil || !resp.Success {
+				waError := ""
+				if err != nil {
+					waError = err.Error()
+				} else if resp != nil {
+					waError = resp.Error
+				}
+				slog.Warn("OTP resend via WhatsApp failed, falling back to SMS",
+					slog.String("phone_masked", maskPhone(phone)),
+					slog.String("reason", waError),
+				)
 				channel = "sms"
 				if s.fazpassClient.IsEnabled() {
 					_, err = s.fazpassClient.SendOTP(ctx, fazpass.SendOTPRequest{

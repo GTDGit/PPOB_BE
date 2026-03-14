@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -88,6 +89,32 @@ func (c *Client) SendOTP(ctx context.Context, req SendOTPRequest) (*SendOTPRespo
 	// Format phone number for WhatsApp (must be in international format without +)
 	phone := formatPhoneForWhatsApp(req.Phone)
 
+	components := []templateComponent{
+		{
+			Type: "body",
+			Parameters: []templateParameter{
+				{
+					Type: "text",
+					Text: req.OTP,
+				},
+			},
+		},
+	}
+
+	if c.cfg.OTPButtonSubType != "" {
+		components = append(components, templateComponent{
+			Type:    "button",
+			SubType: c.cfg.OTPButtonSubType,
+			Index:   c.cfg.OTPButtonIndex,
+			Parameters: []templateParameter{
+				{
+					Type: "text",
+					Text: req.OTP,
+				},
+			},
+		})
+	}
+
 	// Build template message
 	msg := templateMessage{
 		MessagingProduct: "whatsapp",
@@ -96,30 +123,9 @@ func (c *Client) SendOTP(ctx context.Context, req SendOTPRequest) (*SendOTPRespo
 		Template: templateContent{
 			Name: c.cfg.OTPTemplateName,
 			Language: templateLanguage{
-				Code: "id", // Indonesian
+				Code: c.cfg.OTPTemplateLanguage,
 			},
-			Components: []templateComponent{
-				{
-					Type: "body",
-					Parameters: []templateParameter{
-						{
-							Type: "text",
-							Text: req.OTP,
-						},
-					},
-				},
-				{
-					Type:    "button",
-					SubType: "url",
-					Index:   "0",
-					Parameters: []templateParameter{
-						{
-							Type: "text",
-							Text: req.OTP,
-						},
-					},
-				},
-			},
+			Components: components,
 		},
 	}
 
@@ -157,6 +163,12 @@ func (c *Client) SendOTP(ctx context.Context, req SendOTPRequest) (*SendOTPRespo
 
 	// Check for API error
 	if apiResp.Error != nil {
+		slog.Warn("whatsapp OTP send failed",
+			slog.String("phone", phone),
+			slog.String("template", c.cfg.OTPTemplateName),
+			slog.String("message", apiResp.Error.Message),
+			slog.Int("code", apiResp.Error.Code),
+		)
 		return &SendOTPResponse{
 			Success: false,
 			Error:   apiResp.Error.Message,
