@@ -66,11 +66,24 @@ services:
     container_name: ppob_redis
     ports:
       - "6379:6379"
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    command:
+      - sh
+      - -c
+      - |
+        if [ -n "$$REDIS_PASSWORD" ]; then
+          exec redis-server --requirepass "$$REDIS_PASSWORD" --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+        fi
+        exec redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     volumes:
       - ppob_redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+        [
+          "CMD-SHELL",
+          "if [ -n \"$$REDIS_PASSWORD\" ]; then redis-cli -a \"$$REDIS_PASSWORD\" ping; else redis-cli ping; fi",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
