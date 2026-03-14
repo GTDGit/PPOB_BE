@@ -219,22 +219,8 @@ func (s *UserService) GetSettings(ctx context.Context, userID string) (*domain.S
 		return nil, domain.ErrNotFound("Settings")
 	}
 
-	// Build response
-	settingsDetail := &domain.UserSettingsDetail{
-		PINRequiredForTransaction:     settings.PINRequiredForTransaction,
-		PINRequiredMinAmount:          settings.PINRequiredMinAmount,
-		PINRequiredMinAmountFormatted: formatHomeCurrency(settings.PINRequiredMinAmount),
-		BiometricEnabled:              settings.BiometricEnabled,
-		DefaultSellingPriceMarkup:     settings.DefaultSellingPriceMarkup,
-		NotificationEnabled:           true, // Default to true (not in DB yet)
-		EmailNotificationEnabled:      true, // Default to true (not in DB yet)
-		WhatsAppNotificationEnabled:   true, // Default to true (not in DB yet)
-		Language:                      settings.Language,
-		Theme:                         settings.Theme,
-	}
-
 	return &domain.SettingsResponse{
-		Settings: settingsDetail,
+		Settings: buildUserSettingsDetail(settings),
 	}, nil
 }
 
@@ -249,7 +235,72 @@ func (s *UserService) UpdateSettings(ctx context.Context, userID string, updates
 		return nil, domain.ErrNotFound("Settings")
 	}
 
-	// Update fields if provided
+	applySecuritySettings(settings, nestedSettingsMap(updates, "security"))
+	applyTransactionSettings(settings, nestedSettingsMap(updates, "transaction"))
+	applyDisplaySettings(settings, nestedSettingsMap(updates, "display"))
+	applyPrivacySettings(settings, nestedSettingsMap(updates, "privacy"))
+
+	// Backward compatibility for older flat payloads.
+	applySecuritySettings(settings, updates)
+	applyTransactionSettings(settings, updates)
+	applyDisplaySettings(settings, updates)
+	applyPrivacySettings(settings, updates)
+
+	settings.UpdatedAt = time.Now()
+
+	// Update settings
+	if err := s.settingsRepo.Update(ctx, settings); err != nil {
+		return nil, fmt.Errorf("failed to update settings: %w", err)
+	}
+
+	return &domain.UpdateSettingsResponse{
+		Updated:  true,
+		Settings: buildUserSettingsDetail(settings),
+	}, nil
+}
+
+func buildUserSettingsDetail(settings *domain.UserSettings) *domain.UserSettingsDetail {
+	return &domain.UserSettingsDetail{
+		Security: &domain.SecuritySettingsDetail{
+			PINRequiredForTransaction:     settings.PINRequiredForTransaction,
+			PINRequiredMinAmount:          settings.PINRequiredMinAmount,
+			PINRequiredMinAmountFormatted: formatHomeCurrency(settings.PINRequiredMinAmount),
+			BiometricEnabled:              settings.BiometricEnabled,
+		},
+		Transaction: &domain.TransactionSettingsDetail{
+			DefaultSellingPriceMarkup:          settings.DefaultSellingPriceMarkup,
+			DefaultSellingPriceMarkupFormatted: formatHomeCurrency(int64(settings.DefaultSellingPriceMarkup)),
+			AutoSaveContact:                    settings.AutoSaveContact,
+			ShowProfitOnReceipt:                settings.ShowProfitOnReceipt,
+		},
+		Display: &domain.DisplaySettingsDetail{
+			Language: settings.Language,
+			Currency: settings.Currency,
+			Theme:    settings.Theme,
+		},
+		Privacy: &domain.PrivacySettingsDetail{
+			ShowPhoneOnQris: settings.ShowPhoneOnQRIS,
+			ShowNameOnQris:  settings.ShowNameOnQRIS,
+		},
+	}
+}
+
+func nestedSettingsMap(updates map[string]interface{}, key string) map[string]interface{} {
+	raw, ok := updates[key]
+	if !ok {
+		return nil
+	}
+	nested, ok := raw.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	return nested
+}
+
+func applySecuritySettings(settings *domain.UserSettings, updates map[string]interface{}) {
+	if updates == nil {
+		return
+	}
 	if val, ok := updates["pinRequiredForTransaction"].(bool); ok {
 		settings.PINRequiredForTransaction = val
 	}
@@ -259,43 +310,48 @@ func (s *UserService) UpdateSettings(ctx context.Context, userID string, updates
 	if val, ok := updates["biometricEnabled"].(bool); ok {
 		settings.BiometricEnabled = val
 	}
+}
+
+func applyTransactionSettings(settings *domain.UserSettings, updates map[string]interface{}) {
+	if updates == nil {
+		return
+	}
 	if val, ok := updates["defaultSellingPriceMarkup"].(float64); ok {
 		settings.DefaultSellingPriceMarkup = int(val)
 	}
-	// Note: notificationEnabled, emailNotificationEnabled, whatsappNotificationEnabled
-	// are not in the database schema yet, so we skip them
-	if val, ok := updates["language"].(string); ok {
+	if val, ok := updates["autoSaveContact"].(bool); ok {
+		settings.AutoSaveContact = val
+	}
+	if val, ok := updates["showProfitOnReceipt"].(bool); ok {
+		settings.ShowProfitOnReceipt = val
+	}
+}
+
+func applyDisplaySettings(settings *domain.UserSettings, updates map[string]interface{}) {
+	if updates == nil {
+		return
+	}
+	if val, ok := updates["language"].(string); ok && val != "" {
 		settings.Language = val
 	}
-	if val, ok := updates["theme"].(string); ok {
+	if val, ok := updates["currency"].(string); ok && val != "" {
+		settings.Currency = val
+	}
+	if val, ok := updates["theme"].(string); ok && val != "" {
 		settings.Theme = val
 	}
+}
 
-	settings.UpdatedAt = time.Now()
-
-	// Update settings
-	if err := s.settingsRepo.Update(ctx, settings); err != nil {
-		return nil, fmt.Errorf("failed to update settings: %w", err)
+func applyPrivacySettings(settings *domain.UserSettings, updates map[string]interface{}) {
+	if updates == nil {
+		return
 	}
-
-	// Build response
-	settingsDetail := &domain.UserSettingsDetail{
-		PINRequiredForTransaction:     settings.PINRequiredForTransaction,
-		PINRequiredMinAmount:          settings.PINRequiredMinAmount,
-		PINRequiredMinAmountFormatted: formatHomeCurrency(settings.PINRequiredMinAmount),
-		BiometricEnabled:              settings.BiometricEnabled,
-		DefaultSellingPriceMarkup:     settings.DefaultSellingPriceMarkup,
-		NotificationEnabled:           true, // Default to true (not in DB yet)
-		EmailNotificationEnabled:      true, // Default to true (not in DB yet)
-		WhatsAppNotificationEnabled:   true, // Default to true (not in DB yet)
-		Language:                      settings.Language,
-		Theme:                         settings.Theme,
+	if val, ok := updates["showPhoneOnQris"].(bool); ok {
+		settings.ShowPhoneOnQRIS = val
 	}
-
-	return &domain.UpdateSettingsResponse{
-		Updated:  true,
-		Settings: settingsDetail,
-	}, nil
+	if val, ok := updates["showNameOnQris"].(bool); ok {
+		settings.ShowNameOnQRIS = val
+	}
 }
 
 // GetReferralInfo returns referral information (mock)

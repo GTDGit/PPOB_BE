@@ -64,22 +64,45 @@ type SettingsResponse struct {
 
 // UserSettingsDetail represents detailed user settings
 type UserSettingsDetail struct {
-	PINRequiredForTransaction     bool   `json:"pinRequiredForTransaction"`
-	PINRequiredMinAmount          int64  `json:"pinRequiredMinAmount"`
-	PINRequiredMinAmountFormatted string `json:"pinRequiredMinAmountFormatted"`
-	BiometricEnabled              bool   `json:"biometricEnabled"`
-	DefaultSellingPriceMarkup     int    `json:"defaultSellingPriceMarkup"`
-	NotificationEnabled           bool   `json:"notificationEnabled"`
-	EmailNotificationEnabled      bool   `json:"emailNotificationEnabled"`
-	WhatsAppNotificationEnabled   bool   `json:"whatsappNotificationEnabled"`
-	Language                      string `json:"language"`
-	Theme                         string `json:"theme"`
+	Security    *SecuritySettingsDetail    `json:"security"`
+	Transaction *TransactionSettingsDetail `json:"transaction"`
+	Display     *DisplaySettingsDetail     `json:"display"`
+	Privacy     *PrivacySettingsDetail     `json:"privacy"`
 }
 
 // UpdateSettingsResponse represents update settings response
 type UpdateSettingsResponse struct {
 	Updated  bool                `json:"updated"`
 	Settings *UserSettingsDetail `json:"settings"`
+}
+
+// SecuritySettingsDetail represents security setting payload returned to the app.
+type SecuritySettingsDetail struct {
+	PINRequiredForTransaction     bool   `json:"pinRequiredForTransaction"`
+	PINRequiredMinAmount          int64  `json:"pinRequiredMinAmount"`
+	PINRequiredMinAmountFormatted string `json:"pinRequiredMinAmountFormatted"`
+	BiometricEnabled              bool   `json:"biometricEnabled"`
+}
+
+// TransactionSettingsDetail represents transaction setting payload returned to the app.
+type TransactionSettingsDetail struct {
+	DefaultSellingPriceMarkup          int    `json:"defaultSellingPriceMarkup"`
+	DefaultSellingPriceMarkupFormatted string `json:"defaultSellingPriceMarkupFormatted"`
+	AutoSaveContact                    bool   `json:"autoSaveContact"`
+	ShowProfitOnReceipt                bool   `json:"showProfitOnReceipt"`
+}
+
+// DisplaySettingsDetail represents display setting payload returned to the app.
+type DisplaySettingsDetail struct {
+	Language string `json:"language"`
+	Currency string `json:"currency"`
+	Theme    string `json:"theme"`
+}
+
+// PrivacySettingsDetail represents privacy setting payload returned to the app.
+type PrivacySettingsDetail struct {
+	ShowPhoneOnQris bool `json:"showPhoneOnQris"`
+	ShowNameOnQris  bool `json:"showNameOnQris"`
 }
 
 // ReferralInfoResponse represents referral info response

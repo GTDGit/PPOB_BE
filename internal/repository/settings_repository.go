@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/GTDGit/PPOB_BE/internal/domain"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
-	"github.com/GTDGit/PPOB_BE/internal/domain"
 )
 
 type UserSettingsRepository interface {
@@ -26,10 +26,10 @@ func NewUserSettingsRepository(db *sqlx.DB) UserSettingsRepository {
 }
 
 // Column constants for explicit SELECT
-const settingsColumns = `id, user_id, notification_enabled, transaction_alert, 
-                         promo_notification, email_notification, auto_save_contact, 
-                         show_profit_on_receipt, language, currency, theme, 
-                         created_at, updated_at`
+const settingsColumns = `id, user_id, pin_required_for_transaction, pin_required_min_amount,
+                         biometric_enabled, default_selling_price_markup, auto_save_contact,
+                         show_profit_on_receipt, language, currency, theme,
+                         show_phone_on_qris, show_name_on_qris, created_at, updated_at`
 
 func (r *userSettingsRepository) FindByUserID(ctx context.Context, userID string) (*domain.UserSettings, error) {
 	var settings domain.UserSettings
