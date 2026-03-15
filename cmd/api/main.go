@@ -149,7 +149,7 @@ func main() {
 	voucherService := service.NewVoucherService(voucherRepo)
 	contactService := service.NewContactService(contactRepo, productRepo)
 	homeService := service.NewHomeService(homeRepo, userRepo, balanceRepo, notificationRepo)
-	userService := service.NewUserService(userRepo, balanceRepo, settingsRepo)
+	userService := service.NewUserService(userRepo, balanceRepo, historyRepo, settingsRepo)
 	historyService := service.NewHistoryService(historyRepo)
 	notificationService := service.NewNotificationService(notificationRepo, firebaseClient)
 	depositService := service.NewDepositService(depositRepo, balanceRepo, userRepo, gerbangClient, cfg.Fallback.PaymentEnabled)

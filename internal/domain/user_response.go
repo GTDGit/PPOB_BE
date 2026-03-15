@@ -3,23 +3,25 @@ package domain
 // ProfileResponse represents user profile response
 type ProfileResponse struct {
 	User     *ProfileUser     `json:"user"`
+	Balance  *HomeBalanceInfo `json:"balance,omitempty"`
 	Stats    *ProfileStats    `json:"stats"`
 	TierInfo *ProfileTierInfo `json:"tierInfo"`
 }
 
 // ProfileUser represents user profile data
 type ProfileUser struct {
-	ID           string  `json:"id"`
-	MIC          string  `json:"mic"`
-	Phone        string  `json:"phone"`
-	FullName     string  `json:"fullName"`
-	Email        *string `json:"email,omitempty"`
-	Gender       *string `json:"gender,omitempty"`
-	Tier         string  `json:"tier"`
-	AvatarURL    *string `json:"avatarUrl,omitempty"`
-	KYCStatus    string  `json:"kycStatus"`
-	BusinessType *string `json:"businessType,omitempty"`
-	CreatedAt    string  `json:"createdAt"`
+	ID            string  `json:"id"`
+	MIC           string  `json:"mic"`
+	Phone         string  `json:"phone"`
+	FullName      string  `json:"fullName"`
+	Email         *string `json:"email,omitempty"`
+	EmailVerified bool    `json:"emailVerified"`
+	Gender        *string `json:"gender,omitempty"`
+	Tier          string  `json:"tier"`
+	AvatarURL     *string `json:"avatarUrl,omitempty"`
+	KYCStatus     string  `json:"kycStatus"`
+	BusinessType  *string `json:"businessType,omitempty"`
+	CreatedAt     string  `json:"createdAt"`
 }
 
 // ProfileStats represents user statistics

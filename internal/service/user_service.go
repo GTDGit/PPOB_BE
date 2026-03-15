@@ -13,6 +13,7 @@ import (
 type UserService struct {
 	userRepo     repository.UserRepository
 	balanceRepo  repository.BalanceRepository
+	historyRepo  repository.HistoryRepository
 	settingsRepo repository.UserSettingsRepository
 }
 
@@ -20,11 +21,13 @@ type UserService struct {
 func NewUserService(
 	userRepo repository.UserRepository,
 	balanceRepo repository.BalanceRepository,
+	historyRepo repository.HistoryRepository,
 	settingsRepo repository.UserSettingsRepository,
 ) *UserService {
 	return &UserService{
 		userRepo:     userRepo,
 		balanceRepo:  balanceRepo,
+		historyRepo:  historyRepo,
 		settingsRepo: settingsRepo,
 	}
 }
@@ -51,27 +54,50 @@ func (s *UserService) GetProfile(ctx context.Context, userID string) (*domain.Pr
 	}
 
 	profileUser := &domain.ProfileUser{
-		ID:           user.ID,
-		MIC:          user.MIC,
-		Phone:        user.Phone,
-		FullName:     user.FullName,
-		Email:        emailPtr,
-		Gender:       user.Gender,
-		Tier:         user.Tier,
-		AvatarURL:    user.AvatarURL,
-		KYCStatus:    user.KYCStatus,
-		BusinessType: user.BusinessType,
-		CreatedAt:    user.CreatedAt.Format(time.RFC3339),
+		ID:            user.ID,
+		MIC:           user.MIC,
+		Phone:         user.Phone,
+		FullName:      user.FullName,
+		Email:         emailPtr,
+		EmailVerified: user.EmailVerifiedAt.Valid,
+		Gender:        user.Gender,
+		Tier:          user.Tier,
+		AvatarURL:     user.AvatarURL,
+		KYCStatus:     user.KYCStatus,
+		BusinessType:  user.BusinessType,
+		CreatedAt:     user.CreatedAt.Format(time.RFC3339),
 	}
 
-	// Build stats (mock for now)
+	balance, err := s.balanceRepo.FindByUserID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get balance: %w", err)
+	}
+	if balance == nil {
+		balance = &domain.Balance{
+			UserID: userID,
+		}
+	}
+
+	summary, err := s.historyRepo.GetUserSummary(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get profile summary: %w", err)
+	}
+
 	memberSince := user.CreatedAt.Format("January 2006")
 	memberDays := int(time.Since(user.CreatedAt).Hours() / 24)
+	totalTransactions := 0
+	totalTransactionAmount := int64(0)
+	if summary != nil {
+		if summary.TotalTransactions > 0 {
+			totalTransactions = summary.TotalTransactions
+		}
+		totalTransactionAmount = summary.SuccessfulAmount
+	}
 
 	stats := &domain.ProfileStats{
-		TotalTransactions:               0, // TODO: Implement from transaction history
-		TotalTransactionAmount:          0,
-		TotalTransactionAmountFormatted: "Rp0",
+		TotalTransactions:               totalTransactions,
+		TotalTransactionAmount:          totalTransactionAmount,
+		TotalTransactionAmountFormatted: formatHomeCurrency(totalTransactionAmount),
 		MemberSince:                     memberSince,
 		MemberDays:                      memberDays,
 	}
@@ -81,6 +107,7 @@ func (s *UserService) GetProfile(ctx context.Context, userID string) (*domain.Pr
 
 	return &domain.ProfileResponse{
 		User:     profileUser,
+		Balance:  s.buildProfileBalance(balance),
 		Stats:    stats,
 		TierInfo: tierInfo,
 	}, nil
@@ -137,17 +164,18 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID string, fullName
 	}
 
 	profileUser := &domain.ProfileUser{
-		ID:           user.ID,
-		MIC:          user.MIC,
-		Phone:        user.Phone,
-		FullName:     user.FullName,
-		Email:        emailPtr,
-		Gender:       user.Gender,
-		Tier:         user.Tier,
-		AvatarURL:    user.AvatarURL,
-		KYCStatus:    user.KYCStatus,
-		BusinessType: user.BusinessType,
-		CreatedAt:    user.CreatedAt.Format(time.RFC3339),
+		ID:            user.ID,
+		MIC:           user.MIC,
+		Phone:         user.Phone,
+		FullName:      user.FullName,
+		Email:         emailPtr,
+		EmailVerified: user.EmailVerifiedAt.Valid,
+		Gender:        user.Gender,
+		Tier:          user.Tier,
+		AvatarURL:     user.AvatarURL,
+		KYCStatus:     user.KYCStatus,
+		BusinessType:  user.BusinessType,
+		CreatedAt:     user.CreatedAt.Format(time.RFC3339),
 	}
 
 	return &domain.UpdateProfileResponse{
@@ -454,4 +482,39 @@ func (s *UserService) buildTierInfo(tier string) *domain.ProfileTierInfo {
 	}
 
 	return tierInfo
+}
+
+func (s *UserService) buildProfileBalance(balance *domain.Balance) *domain.HomeBalanceInfo {
+	lastUpdated := balance.UpdatedAt
+	if lastUpdated.IsZero() {
+		lastUpdated = time.Now()
+	}
+
+	balanceInfo := &domain.HomeBalanceInfo{
+		Amount:      balance.Amount,
+		Formatted:   formatHomeCurrency(balance.Amount),
+		LastUpdated: lastUpdated.Format(time.RFC3339),
+	}
+
+	if balance.PendingAmount > 0 {
+		balanceInfo.PendingBalance = &domain.HomePendingBalance{
+			Amount:    balance.PendingAmount,
+			Formatted: formatHomeCurrency(balance.PendingAmount),
+		}
+	}
+
+	if balance.Points > 0 {
+		var expiresAt *string
+		if balance.PointsExpiresAt != nil {
+			formatted := balance.PointsExpiresAt.Format(time.RFC3339)
+			expiresAt = &formatted
+		}
+		balanceInfo.Points = &domain.HomePointsInfo{
+			Amount:    int64(balance.Points),
+			Formatted: fmt.Sprintf("%s Poin", formatNumberHome(int64(balance.Points))),
+			ExpiresAt: expiresAt,
+		}
+	}
+
+	return balanceInfo
 }

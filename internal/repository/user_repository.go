@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/GTDGit/PPOB_BE/internal/domain"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
-	"github.com/GTDGit/PPOB_BE/internal/domain"
 )
 
 type UserRepository interface {
@@ -34,7 +34,7 @@ func NewUserRepository(db *sqlx.DB) UserRepository {
 }
 
 // Column constants for explicit SELECT
-const userColumns = `id, mic, phone, full_name, email, gender, tier, avatar_url, 
+const userColumns = `id, mic, phone, full_name, email, email_verified_at, gender, tier, avatar_url, 
                      kyc_status, business_type, source, referred_by, referral_code, 
                      used_referral_code, pin_hash, is_active, is_locked, locked_until, 
                      phone_verified_at, created_at, updated_at`

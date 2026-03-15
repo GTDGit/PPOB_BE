@@ -16,6 +16,7 @@ type HistoryRepository interface {
 	FindByID(ctx context.Context, id string) (*domain.Transaction, error)
 	FindByUserAndID(ctx context.Context, userID, id string) (*domain.Transaction, error)
 	FindByUserID(ctx context.Context, userID string, filter TransactionFilter) ([]*domain.Transaction, int, error)
+	GetUserSummary(ctx context.Context, userID string) (*HistorySummary, error)
 	Create(ctx context.Context, tx *domain.Transaction) error
 	CreateWithTx(ctx context.Context, dbtx *sqlx.Tx, tx *domain.Transaction) error
 	UpdateStatus(ctx context.Context, id, status string, receiptData *string) error
@@ -32,6 +33,12 @@ type TransactionFilter struct {
 	Search      string
 	Page        int
 	PerPage     int
+}
+
+type HistorySummary struct {
+	TotalTransactions      int   `db:"total_transactions"`
+	SuccessfulTransactions int   `db:"successful_transactions"`
+	SuccessfulAmount       int64 `db:"successful_amount"`
 }
 
 type historyRepository struct {
@@ -180,6 +187,24 @@ func (r *historyRepository) FindByUserID(ctx context.Context, userID string, fil
 	}
 
 	return transactions, total, nil
+}
+
+func (r *historyRepository) GetUserSummary(ctx context.Context, userID string) (*HistorySummary, error) {
+	query := `
+		SELECT
+			COUNT(*) AS total_transactions,
+			COUNT(*) FILTER (WHERE status = 'success') AS successful_transactions,
+			COALESCE(SUM(total_payment) FILTER (WHERE status = 'success'), 0) AS successful_amount
+		FROM transactions
+		WHERE user_id = $1
+	`
+
+	var summary HistorySummary
+	if err := r.db.GetContext(ctx, &summary, query, userID); err != nil {
+		return nil, err
+	}
+
+	return &summary, nil
 }
 
 // Create inserts a transaction record.

@@ -12,6 +12,7 @@ type User struct {
 	Phone            string         `db:"phone" json:"phone"`
 	FullName         string         `db:"full_name" json:"fullName"`
 	Email            sql.NullString `db:"email" json:"email"`
+	EmailVerifiedAt  sql.NullTime   `db:"email_verified_at" json:"emailVerifiedAt"`
 	Gender           *string        `db:"gender" json:"gender"`
 	Tier             string         `db:"tier" json:"tier"`
 	AvatarURL        *string        `db:"avatar_url" json:"avatarUrl"`
@@ -32,14 +33,18 @@ type User struct {
 
 // UserResponse is the user object returned in API responses
 type UserResponse struct {
-	ID        string  `json:"id"`
-	MIC       string  `json:"mic"`
-	Phone     string  `json:"phone"`
-	FullName  string  `json:"fullName"`
-	Email     *string `json:"email"`
-	Tier      string  `json:"tier"`
-	AvatarURL *string `json:"avatarUrl"`
-	KYCStatus string  `json:"kycStatus"`
+	ID            string  `json:"id"`
+	MIC           string  `json:"mic"`
+	Phone         string  `json:"phone"`
+	FullName      string  `json:"fullName"`
+	Email         *string `json:"email"`
+	EmailVerified bool    `json:"emailVerified"`
+	Gender        *string `json:"gender,omitempty"`
+	Tier          string  `json:"tier"`
+	AvatarURL     *string `json:"avatarUrl"`
+	KYCStatus     string  `json:"kycStatus"`
+	BusinessType  *string `json:"businessType,omitempty"`
+	CreatedAt     string  `json:"createdAt"`
 }
 
 // ToResponse converts User to UserResponse
@@ -49,14 +54,18 @@ func (u *User) ToResponse() *UserResponse {
 		email = &u.Email.String
 	}
 	return &UserResponse{
-		ID:        u.ID,
-		MIC:       u.MIC,
-		Phone:     u.Phone,
-		FullName:  u.FullName,
-		Email:     email,
-		Tier:      u.Tier,
-		AvatarURL: u.AvatarURL,
-		KYCStatus: u.KYCStatus,
+		ID:            u.ID,
+		MIC:           u.MIC,
+		Phone:         u.Phone,
+		FullName:      u.FullName,
+		Email:         email,
+		EmailVerified: u.EmailVerifiedAt.Valid,
+		Gender:        u.Gender,
+		Tier:          u.Tier,
+		AvatarURL:     u.AvatarURL,
+		KYCStatus:     u.KYCStatus,
+		BusinessType:  u.BusinessType,
+		CreatedAt:     u.CreatedAt.Format(time.RFC3339),
 	}
 }
 
