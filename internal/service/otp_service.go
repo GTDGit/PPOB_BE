@@ -159,6 +159,13 @@ func (s *OTPService) SendOTP(ctx context.Context, req SendOTPRequest) (*SendOTPR
 			} else {
 				return nil, domain.ErrOTPSendFailed
 			}
+		} else {
+			slog.Info("OTP WhatsApp accepted by Meta",
+				slog.String("phone_masked", maskPhone(phone)),
+				slog.String("session_id", sessionID),
+				slog.String("flow", req.Flow),
+				slog.String("message_id", resp.MessageID),
+			)
 		}
 	} else if s.fazpassClient.IsEnabled() {
 		channel = "sms"
@@ -325,6 +332,13 @@ func (s *OTPService) ResendOTP(ctx context.Context, phone, sessionID, otpMethod 
 				} else {
 					return nil, domain.ErrOTPSendFailed
 				}
+			} else {
+				slog.Info("OTP WhatsApp resend accepted by Meta",
+					slog.String("phone_masked", maskPhone(phone)),
+					slog.String("session_id", sessionID),
+					slog.String("flow", session.Flow),
+					slog.String("message_id", resp.MessageID),
+				)
 			}
 		}
 	} else if s.fazpassClient.IsEnabled() {

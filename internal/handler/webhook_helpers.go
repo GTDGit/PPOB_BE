@@ -10,3 +10,7 @@ func getGerbangSignature(c *gin.Context) string {
 	}
 	return ""
 }
+
+func getWhatsAppSignature(c *gin.Context) string {
+	return c.GetHeader("X-Hub-Signature-256")
+}

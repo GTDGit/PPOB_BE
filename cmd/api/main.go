@@ -173,6 +173,7 @@ func main() {
 	kycHandler := handler.NewKYCHandler(kycService)
 	depositHandler := handler.NewDepositHandler(depositService, cfg.Gerbang.CallbackSecret)
 	sandboxHandler := handler.NewSandboxHandler(sandboxService)
+	whatsAppWebhookHandler := handler.NewWhatsAppWebhookHandler(cfg.WhatsApp)
 	gerbangWebhookHandler := handler.NewGerbangWebhookHandler(
 		prepaidService,
 		postpaidService,
@@ -452,6 +453,8 @@ func main() {
 		Window: time.Minute,
 	}))
 	{
+		internal.GET("/webhook/whatsapp", whatsAppWebhookHandler.HandleVerify)
+		internal.POST("/webhook/whatsapp", whatsAppWebhookHandler.HandleWebhook)
 		internal.POST("/webhook/gerbang", gerbangWebhookHandler.HandleWebhook)
 		internal.POST("/webhook/deposit", depositHandler.HandleWebhook)
 		internal.POST("/webhook/transfer", transferHandler.HandleWebhook)

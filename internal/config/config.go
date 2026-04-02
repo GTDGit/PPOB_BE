@@ -78,6 +78,8 @@ type WhatsAppConfig struct {
 	OTPTemplateLanguage string
 	OTPButtonSubType    string
 	OTPButtonIndex      string
+	WebhookVerifyToken  string
+	AppSecret           string
 }
 
 type FazpassConfig struct {
@@ -198,6 +200,8 @@ func Load() (*Config, error) {
 			OTPTemplateLanguage: getEnv("WA_OTP_TEMPLATE_LANGUAGE", "id"),
 			OTPButtonSubType:    getEnv("WA_OTP_BUTTON_SUBTYPE", ""),
 			OTPButtonIndex:      getEnv("WA_OTP_BUTTON_INDEX", "0"),
+			WebhookVerifyToken:  getEnv("WA_WEBHOOK_VERIFY_TOKEN", ""),
+			AppSecret:           getEnv("WA_APP_SECRET", ""),
 		},
 		Fazpass: FazpassConfig{
 			APIURL:      getEnv("FAZPASS_API_URL", "https://api.fazpass.com"),
