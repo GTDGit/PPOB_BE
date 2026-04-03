@@ -12,6 +12,7 @@ type Config struct {
 	Database      DatabaseConfig
 	Redis         RedisConfig
 	JWT           JWTConfig
+	Admin         AdminConfig
 	OTP           OTPConfig
 	WhatsApp      WhatsAppConfig
 	Fazpass       FazpassConfig
@@ -57,6 +58,22 @@ type JWTConfig struct {
 	AccessTTL    time.Duration
 	RefreshTTL   time.Duration
 	TempTokenTTL time.Duration
+}
+
+type AdminConfig struct {
+	FrontendURL       string
+	InviteBaseURL     string
+	CORSOrigin        string
+	JWTSecret         string
+	AccessTTL         time.Duration
+	RefreshTTL        time.Duration
+	InviteTTL         time.Duration
+	TOTPIssuer        string
+	BootstrapSecret   string
+	BootstrapEmail    string
+	BootstrapPhone    string
+	BootstrapFullName string
+	BootstrapRoleID   string
 }
 
 type OTPConfig struct {
@@ -181,6 +198,21 @@ func Load() (*Config, error) {
 			AccessTTL:    time.Duration(getEnvAsInt("JWT_ACCESS_TTL", 3600)) * time.Second,     // 1 hour (fintech UX)
 			RefreshTTL:   time.Duration(getEnvAsInt("JWT_REFRESH_TTL", 7776000)) * time.Second, // 90 days (fintech UX)
 			TempTokenTTL: time.Duration(getEnvAsInt("TEMP_TOKEN_TTL", 900)) * time.Second,
+		},
+		Admin: AdminConfig{
+			FrontendURL:       getEnv("ADMIN_FRONTEND_URL", "https://console.ppob.id"),
+			InviteBaseURL:     getEnv("ADMIN_INVITE_BASE_URL", "https://console.ppob.id/activate"),
+			CORSOrigin:        getEnv("ADMIN_CORS_ORIGIN", "https://console.ppob.id"),
+			JWTSecret:         getEnv("ADMIN_JWT_SECRET", getEnvRequired("JWT_SECRET")),
+			AccessTTL:         time.Duration(getEnvAsInt("ADMIN_JWT_ACCESS_TTL", 3600)) * time.Second,
+			RefreshTTL:        time.Duration(getEnvAsInt("ADMIN_JWT_REFRESH_TTL", 2592000)) * time.Second,
+			InviteTTL:         time.Duration(getEnvAsInt("ADMIN_INVITE_TTL_HOURS", 72)) * time.Hour,
+			TOTPIssuer:        getEnv("ADMIN_TOTP_ISSUER", "PPOB.ID Admin"),
+			BootstrapSecret:   getEnv("ADMIN_BOOTSTRAP_SECRET", ""),
+			BootstrapEmail:    getEnv("ADMIN_BOOTSTRAP_EMAIL", ""),
+			BootstrapPhone:    getEnv("ADMIN_BOOTSTRAP_PHONE", ""),
+			BootstrapFullName: getEnv("ADMIN_BOOTSTRAP_FULL_NAME", ""),
+			BootstrapRoleID:   getEnv("ADMIN_BOOTSTRAP_ROLE_ID", "super_admin"),
 		},
 		OTP: OTPConfig{
 			Length:         getEnvAsInt("OTP_LENGTH", 4),                             // 4 digits (SMS standard)

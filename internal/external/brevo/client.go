@@ -59,7 +59,9 @@ type SendEmailResponse struct {
 type brevoRequest struct {
 	Sender     brevoContact      `json:"sender"`
 	To         []brevoContact    `json:"to"`
-	TemplateID int64             `json:"templateId"`
+	TemplateID int64             `json:"templateId,omitempty"`
+	Subject    string            `json:"subject,omitempty"`
+	HTML       string            `json:"htmlContent,omitempty"`
 	Params     map[string]string `json:"params,omitempty"`
 }
 
@@ -150,6 +152,61 @@ func (c *Client) SendEmail(ctx context.Context, req SendEmailRequest) (*SendEmai
 	}
 
 	// Check response
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return &SendEmailResponse{
+			Success:   true,
+			MessageID: apiResp.MessageID,
+		}, nil
+	}
+
+	return &SendEmailResponse{
+		Success: false,
+		Error:   apiResp.Message,
+	}, nil
+}
+
+// SendRawEmail sends a transactional email without using template IDs.
+func (c *Client) SendRawEmail(ctx context.Context, toEmail, toName, subject, html string) (*SendEmailResponse, error) {
+	brevoReq := brevoRequest{
+		Sender: brevoContact{
+			Email: c.cfg.SenderEmail,
+			Name:  c.cfg.SenderName,
+		},
+		To: []brevoContact{
+			{
+				Email: toEmail,
+				Name:  toName,
+			},
+		},
+		Subject: subject,
+		HTML:    html,
+	}
+
+	body, err := json.Marshal(brevoReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/smtp/email", c.cfg.APIURL)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("api-key", c.cfg.APIKey)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var apiResp brevoResponse
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return &SendEmailResponse{
 			Success:   true,

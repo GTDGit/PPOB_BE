@@ -75,6 +75,7 @@ func main() {
 	depositRepo := repository.NewDepositRepository(db)
 	territoryRepo := repository.NewTerritoryRepository(db)
 	kycRepo := repository.NewKYCRepository(db)
+	adminRepo := repository.NewAdminRepository(db)
 
 	// Initialize external clients
 	gerbangClient := gerbang.NewClient(gerbang.Config{
@@ -156,6 +157,7 @@ func main() {
 	territoryService := service.NewTerritoryService(territoryRepo)
 	kycService := service.NewKYCService(kycRepo, userRepo, gerbangClient, s3Client, cfg.Fallback.KYCEnabled)
 	sandboxService := service.NewSandboxService(historyRepo, balanceRepo, depositRepo, notificationService)
+	adminService := service.NewAdminService(adminRepo, emailService, cfg.Admin)
 
 	// Initialize handlers
 	authHandler := handler.NewAuthHandler(authService)
@@ -173,6 +175,7 @@ func main() {
 	kycHandler := handler.NewKYCHandler(kycService)
 	depositHandler := handler.NewDepositHandler(depositService, cfg.Gerbang.CallbackSecret)
 	sandboxHandler := handler.NewSandboxHandler(sandboxService)
+	adminHandler := handler.NewAdminHandler(adminService)
 	whatsAppWebhookHandler := handler.NewWhatsAppWebhookHandler(cfg.WhatsApp)
 	gerbangWebhookHandler := handler.NewGerbangWebhookHandler(
 		prepaidService,
@@ -224,7 +227,15 @@ func main() {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(middleware.Logger(logger))
-	router.Use(middleware.CORS(middleware.DefaultCORSConfig()))
+	corsConfig := middleware.DefaultCORSConfig()
+	corsConfig.AllowOrigins = []string{
+		cfg.App.FrontendURL,
+		cfg.Admin.FrontendURL,
+		cfg.Admin.CORSOrigin,
+		"http://localhost:3000",
+		"http://localhost:3001",
+	}
+	router.Use(middleware.CORS(corsConfig))
 	router.Use(middleware.RequestID())
 
 	// Health check
@@ -238,6 +249,73 @@ func main() {
 	// API v1 routes
 	v1 := router.Group("/v1")
 	{
+		admin := v1.Group("/admin")
+		{
+			auth := admin.Group("/auth")
+			{
+				auth.POST("/bootstrap", adminHandler.Bootstrap)
+				auth.POST("/login", adminHandler.Login)
+				auth.POST("/refresh", adminHandler.Refresh)
+				auth.GET("/invites/:token", adminHandler.GetInvitePreview)
+				auth.POST("/invites/accept", adminHandler.AcceptInvite)
+				auth.POST("/invites/confirm-totp", adminHandler.ConfirmInviteTOTP)
+			}
+
+			adminProtected := admin.Group("")
+			adminProtected.Use(middleware.AdminJWTAuth(cfg.Admin.JWTSecret, adminRepo))
+			{
+				adminProtected.GET("/me", adminHandler.Me)
+				adminProtected.POST("/auth/logout", adminHandler.Logout)
+
+				adminProtected.GET("/roles", middleware.AdminRequirePermissions("roles.view"), adminHandler.ListRoles)
+				adminProtected.GET("/permissions", middleware.AdminRequirePermissions("roles.view"), adminHandler.ListPermissions)
+				adminProtected.GET("/dashboard/summary", middleware.AdminRequirePermissions("dashboard.view"), adminHandler.DashboardSummary)
+
+				adminProtected.GET("/admins", middleware.AdminRequirePermissions("admins.view"), adminHandler.ListAdmins)
+				adminProtected.POST("/admins/invite", middleware.AdminRequirePermissions("admins.invite"), adminHandler.CreateInvite)
+				adminProtected.PATCH("/admins/:id/status", middleware.AdminRequirePermissions("admins.manage"), adminHandler.SetAdminStatus)
+
+				adminProtected.GET("/customers", middleware.AdminRequirePermissions("customers.view"), adminHandler.ListCustomers)
+				adminProtected.GET("/transactions", middleware.AdminRequirePermissions("transactions.view"), adminHandler.ListTransactions)
+
+				adminProtected.GET("/deposits", middleware.AdminRequirePermissions("deposits.view"), adminHandler.ListDeposits)
+				adminProtected.POST("/deposits/:id/approve", middleware.AdminRequirePermissions("deposits.approve"), adminHandler.ApproveDeposit)
+				adminProtected.POST("/deposits/:id/reject", middleware.AdminRequirePermissions("deposits.approve"), adminHandler.RejectDeposit)
+
+				adminProtected.GET("/qris", middleware.AdminRequirePermissions("qris.view"), adminHandler.ListQris)
+
+				adminProtected.GET("/vouchers", middleware.AdminRequirePermissions("vouchers.view"), adminHandler.ListVouchers)
+				adminProtected.POST("/vouchers", middleware.AdminRequirePermissions("vouchers.manage"), adminHandler.CreateVoucher)
+				adminProtected.PATCH("/vouchers/:id", middleware.AdminRequirePermissions("vouchers.manage"), adminHandler.UpdateVoucher)
+				adminProtected.PATCH("/vouchers/:id/status", middleware.AdminRequirePermissions("vouchers.manage"), adminHandler.UpdateVoucherStatus)
+
+				adminProtected.GET("/catalog", middleware.AdminRequirePermissions("catalog.view"), adminHandler.GetCatalog)
+				adminProtected.POST("/pricing/requests", middleware.AdminRequirePermissions("pricing.request"), adminHandler.CreatePricingRequest)
+				adminProtected.POST("/finance/balance-adjustments", middleware.AdminRequirePermissions("finance.adjust_balance"), adminHandler.CreateBalanceAdjustmentRequest)
+
+				adminProtected.GET("/kyc", middleware.AdminRequirePermissions("kyc.view"), adminHandler.ListKYC)
+				adminProtected.POST("/kyc/:userId/approve", middleware.AdminRequirePermissions("kyc.approve"), adminHandler.ApproveKYC)
+				adminProtected.POST("/kyc/:userId/reject", middleware.AdminRequirePermissions("kyc.approve"), adminHandler.RejectKYC)
+
+				adminProtected.GET("/banners", middleware.AdminRequirePermissions("banners.view"), adminHandler.ListBanners)
+				adminProtected.POST("/banners", middleware.AdminRequirePermissions("banners.manage"), adminHandler.CreateBanner)
+				adminProtected.PATCH("/banners/:id", middleware.AdminRequirePermissions("banners.manage"), adminHandler.UpdateBanner)
+				adminProtected.DELETE("/banners/:id", middleware.AdminRequirePermissions("banners.manage"), adminHandler.DeleteBanner)
+
+				adminProtected.GET("/notifications", middleware.AdminRequirePermissions("notifications.view"), adminHandler.ListNotifications)
+				adminProtected.POST("/notifications/broadcast", middleware.AdminRequirePermissions("notifications.manage"), adminHandler.BroadcastNotification)
+
+				adminProtected.GET("/approvals", middleware.AdminRequirePermissions("approvals.view"), adminHandler.ListApprovals)
+				adminProtected.POST("/approvals/:id/approve", middleware.AdminRequirePermissions("approvals.act"), adminHandler.ApproveApproval)
+				adminProtected.POST("/approvals/:id/reject", middleware.AdminRequirePermissions("approvals.act"), adminHandler.RejectApproval)
+
+				adminProtected.GET("/audit-logs", middleware.AdminRequirePermissions("audit.view"), adminHandler.ListAuditLogs)
+				adminProtected.GET("/settings", middleware.AdminRequirePermissions("settings.view"), adminHandler.ListSettings)
+				adminProtected.PUT("/settings", middleware.AdminRequirePermissions("settings.manage"), adminHandler.UpsertSetting)
+				adminProtected.GET("/reference-data", middleware.AdminRequirePermissions("reference.view"), adminHandler.ListReferenceData)
+			}
+		}
+
 		// Home routes (protected)
 		v1.GET("/home", middleware.JWTAuth(cfg.JWT.Secret, sessionRepo), homeHandler.GetHome)
 

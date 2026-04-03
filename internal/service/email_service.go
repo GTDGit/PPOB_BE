@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/GTDGit/PPOB_BE/internal/config"
@@ -86,6 +87,42 @@ func (s *EmailService) SendPhoneChangedAlert(ctx context.Context, email, name, o
 	_, err := s.brevoClient.SendPhoneChangedAlert(ctx, email, name, oldPhone, newPhone, changeTime)
 	if err != nil {
 		return fmt.Errorf("failed to send phone changed alert: %w", err)
+	}
+
+	return nil
+}
+
+// SendAdminInvite sends an admin invitation email.
+func (s *EmailService) SendAdminInvite(ctx context.Context, email, name, inviteLink, roleName string) error {
+	if !s.brevoClient.IsEnabled() {
+		return nil
+	}
+
+	displayName := name
+	if strings.TrimSpace(displayName) == "" {
+		displayName = "Admin"
+	}
+
+	html := fmt.Sprintf(`
+		<html>
+			<body style="font-family:Arial,Helvetica,sans-serif;background:#f5f8ff;padding:24px;">
+				<div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:16px;padding:32px;">
+					<h2 style="margin:0 0 12px;color:#1849d6;">Undangan Admin PPOB.ID</h2>
+					<p style="margin:0 0 16px;color:#334155;">Halo %s, Anda diundang sebagai <strong>%s</strong> untuk mengakses console admin PPOB.ID.</p>
+					<p style="margin:0 0 24px;color:#475569;">Klik tombol di bawah untuk aktivasi akun, buat password, lalu setup authenticator.</p>
+					<p style="margin:0 0 24px;">
+						<a href="%s" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:600;">Aktivasi Admin</a>
+					</p>
+					<p style="margin:0;color:#64748b;font-size:13px;">Jika tombol tidak bekerja, buka tautan ini:</p>
+					<p style="margin:8px 0 0;font-size:13px;word-break:break-all;color:#2563eb;">%s</p>
+				</div>
+			</body>
+		</html>
+	`, displayName, roleName, inviteLink, inviteLink)
+
+	_, err := s.brevoClient.SendRawEmail(ctx, email, displayName, "Undangan Admin PPOB.ID", html)
+	if err != nil {
+		return fmt.Errorf("failed to send admin invite email: %w", err)
 	}
 
 	return nil
