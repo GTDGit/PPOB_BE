@@ -24,6 +24,17 @@ func (s *AdminService) ListAdmins(ctx context.Context, search string, page, perP
 	return paginated(items, total, page, perPage), nil
 }
 
+func (s *AdminService) GetAdminDetail(ctx context.Context, adminID string) (map[string]interface{}, error) {
+	item, err := s.repo.GetAdminDetail(ctx, adminID)
+	if err != nil {
+		return nil, err
+	}
+	if item == nil {
+		return nil, domain.ErrNotFound("Admin")
+	}
+	return item, nil
+}
+
 func (s *AdminService) SetAdminStatus(ctx context.Context, actorID, adminID, status string, isActive bool) error {
 	if err := s.repo.UpdateAdminStatus(ctx, adminID, status, isActive); err != nil {
 		return fmt.Errorf("failed to update admin status: %w", err)
@@ -43,6 +54,17 @@ func (s *AdminService) ListCustomers(ctx context.Context, search string, page, p
 	return paginated(items, total, page, perPage), nil
 }
 
+func (s *AdminService) GetCustomerDetail(ctx context.Context, userID string) (map[string]interface{}, error) {
+	item, err := s.repo.GetCustomerDetail(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if item == nil {
+		return nil, domain.ErrNotFound("Pelanggan")
+	}
+	return item, nil
+}
+
 func (s *AdminService) ListTransactions(ctx context.Context, search, status string, page, perPage int) (*domain.AdminListResponse, error) {
 	items, total, err := s.repo.ListTransactions(ctx, search, status, page, perPage)
 	if err != nil {
@@ -51,12 +73,34 @@ func (s *AdminService) ListTransactions(ctx context.Context, search, status stri
 	return paginated(items, total, page, perPage), nil
 }
 
+func (s *AdminService) GetTransactionDetail(ctx context.Context, transactionID string) (map[string]interface{}, error) {
+	item, err := s.repo.GetTransactionDetail(ctx, transactionID)
+	if err != nil {
+		return nil, err
+	}
+	if item == nil {
+		return nil, domain.ErrNotFound("Transaksi")
+	}
+	return item, nil
+}
+
 func (s *AdminService) ListDeposits(ctx context.Context, search, status string, page, perPage int) (*domain.AdminListResponse, error) {
 	items, total, err := s.repo.ListDeposits(ctx, search, status, page, perPage)
 	if err != nil {
 		return nil, err
 	}
 	return paginated(items, total, page, perPage), nil
+}
+
+func (s *AdminService) GetDepositDetail(ctx context.Context, depositID string) (map[string]interface{}, error) {
+	item, err := s.repo.GetDepositDetail(ctx, depositID)
+	if err != nil {
+		return nil, err
+	}
+	if item == nil {
+		return nil, domain.ErrNotFound("Deposit")
+	}
+	return item, nil
 }
 
 func (s *AdminService) ApproveDeposit(ctx context.Context, actorID, depositID string) error {
@@ -157,12 +201,34 @@ func (s *AdminService) ListQris(ctx context.Context, search string, page, perPag
 	return paginated(items, total, page, perPage), nil
 }
 
+func (s *AdminService) GetQrisDetail(ctx context.Context, qrisID string) (map[string]interface{}, error) {
+	item, err := s.repo.GetQrisIncomeDetail(ctx, qrisID)
+	if err != nil {
+		return nil, err
+	}
+	if item == nil {
+		return nil, domain.ErrNotFound("QRIS")
+	}
+	return item, nil
+}
+
 func (s *AdminService) ListVouchers(ctx context.Context, search string, page, perPage int) (*domain.AdminListResponse, error) {
 	items, total, err := s.repo.ListVouchers(ctx, search, page, perPage)
 	if err != nil {
 		return nil, err
 	}
 	return paginated(items, total, page, perPage), nil
+}
+
+func (s *AdminService) GetVoucherDetail(ctx context.Context, voucherID string) (map[string]interface{}, error) {
+	item, err := s.repo.GetVoucherDetail(ctx, voucherID)
+	if err != nil {
+		return nil, err
+	}
+	if item == nil {
+		return nil, domain.ErrNotFound("Voucher")
+	}
+	return item, nil
 }
 
 func (s *AdminService) CreateVoucher(ctx context.Context, actorID string, payload map[string]interface{}) error {
@@ -276,6 +342,17 @@ func (s *AdminService) ListKYC(ctx context.Context, search, status string, page,
 		return nil, err
 	}
 	return paginated(items, total, page, perPage), nil
+}
+
+func (s *AdminService) GetKYCDetail(ctx context.Context, userID string) (map[string]interface{}, error) {
+	item, err := s.repo.GetKYCDetail(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if item == nil {
+		return nil, domain.ErrNotFound("KYC")
+	}
+	return item, nil
 }
 
 func (s *AdminService) ApproveKYC(ctx context.Context, actorID, userID string) error {

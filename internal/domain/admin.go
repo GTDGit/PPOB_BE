@@ -69,6 +69,17 @@ type AdminInvite struct {
 	CreatedAt   time.Time      `db:"created_at" json:"createdAt"`
 }
 
+type AdminPasswordReset struct {
+	ID          string         `db:"id" json:"id"`
+	AdminUserID string         `db:"admin_user_id" json:"adminUserId"`
+	Email       string         `db:"email" json:"email"`
+	TokenHash   string         `db:"token_hash" json:"-"`
+	ExpiresAt   time.Time      `db:"expires_at" json:"expiresAt"`
+	UsedAt      sql.NullTime   `db:"used_at" json:"usedAt"`
+	CreatedAt   time.Time      `db:"created_at" json:"createdAt"`
+	RequestedBy sql.NullString `db:"requested_by" json:"requestedBy"`
+}
+
 type AdminSession struct {
 	ID               string    `db:"id"`
 	AdminUserID      string    `db:"admin_user_id"`
@@ -169,6 +180,11 @@ type AdminInviteAcceptResponse struct {
 	Secret        string   `json:"secret"`
 	OTPAuthURL    string   `json:"otpauthUrl"`
 	RecoveryCodes []string `json:"recoveryCodes"`
+}
+
+type AdminPasswordResetPreviewResponse struct {
+	Email     string `json:"email"`
+	ExpiresAt string `json:"expiresAt"`
 }
 
 type AdminDashboardResponse struct {

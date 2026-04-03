@@ -128,6 +128,43 @@ func (s *EmailService) SendAdminInvite(ctx context.Context, email, name, inviteL
 	return nil
 }
 
+// SendAdminPasswordReset sends an admin password reset email.
+func (s *EmailService) SendAdminPasswordReset(ctx context.Context, email, name, resetLink string) error {
+	if !s.brevoClient.IsEnabled() {
+		return nil
+	}
+
+	displayName := name
+	if strings.TrimSpace(displayName) == "" {
+		displayName = "Admin"
+	}
+
+	html := fmt.Sprintf(`
+		<html>
+			<body style="font-family:Arial,Helvetica,sans-serif;background:#f5f8ff;padding:24px;">
+				<div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:16px;padding:32px;">
+					<h2 style="margin:0 0 12px;color:#1849d6;">Reset Password Console Admin</h2>
+					<p style="margin:0 0 16px;color:#334155;">Halo %s, kami menerima permintaan reset password untuk akun admin PPOB.ID.</p>
+					<p style="margin:0 0 24px;color:#475569;">Klik tombol di bawah ini untuk membuat password baru. Setelah itu Anda perlu memasukkan kode authenticator atau recovery code.</p>
+					<p style="margin:0 0 24px;">
+						<a href="%s" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:600;">Reset Password</a>
+					</p>
+					<p style="margin:0;color:#64748b;font-size:13px;">Jika tombol tidak bekerja, buka tautan ini:</p>
+					<p style="margin:8px 0 0;font-size:13px;word-break:break-all;color:#2563eb;">%s</p>
+					<p style="margin:20px 0 0;color:#94a3b8;font-size:12px;">Link ini hanya berlaku 30 menit.</p>
+				</div>
+			</body>
+		</html>
+	`, displayName, resetLink, resetLink)
+
+	_, err := s.brevoClient.SendRawEmail(ctx, email, displayName, "Reset Password Admin PPOB.ID", html)
+	if err != nil {
+		return fmt.Errorf("failed to send admin password reset email: %w", err)
+	}
+
+	return nil
+}
+
 // SendEmailChangedAlert sends alert for email change to old email
 func (s *EmailService) SendEmailChangedAlert(ctx context.Context, oldEmail, name, newEmail string) error {
 	if !s.brevoClient.IsEnabled() {

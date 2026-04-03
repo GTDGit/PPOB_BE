@@ -256,6 +256,9 @@ func main() {
 				auth.POST("/bootstrap", adminHandler.Bootstrap)
 				auth.POST("/login", adminHandler.Login)
 				auth.POST("/refresh", adminHandler.Refresh)
+				auth.POST("/forgot-password", adminHandler.ForgotPassword)
+				auth.GET("/password-resets/:token", adminHandler.GetPasswordResetPreview)
+				auth.POST("/password-resets/confirm", adminHandler.ResetPassword)
 				auth.GET("/invites/:token", adminHandler.GetInvitePreview)
 				auth.POST("/invites/accept", adminHandler.AcceptInvite)
 				auth.POST("/invites/confirm-totp", adminHandler.ConfirmInviteTOTP)
@@ -272,19 +275,25 @@ func main() {
 				adminProtected.GET("/dashboard/summary", middleware.AdminRequirePermissions("dashboard.view"), adminHandler.DashboardSummary)
 
 				adminProtected.GET("/admins", middleware.AdminRequirePermissions("admins.view"), adminHandler.ListAdmins)
+				adminProtected.GET("/admins/:id", middleware.AdminRequirePermissions("admins.view"), adminHandler.GetAdminDetail)
 				adminProtected.POST("/admins/invite", middleware.AdminRequirePermissions("admins.invite"), adminHandler.CreateInvite)
 				adminProtected.PATCH("/admins/:id/status", middleware.AdminRequirePermissions("admins.manage"), adminHandler.SetAdminStatus)
 
 				adminProtected.GET("/customers", middleware.AdminRequirePermissions("customers.view"), adminHandler.ListCustomers)
+				adminProtected.GET("/customers/:id", middleware.AdminRequirePermissions("customers.view"), adminHandler.GetCustomerDetail)
 				adminProtected.GET("/transactions", middleware.AdminRequirePermissions("transactions.view"), adminHandler.ListTransactions)
+				adminProtected.GET("/transactions/:id", middleware.AdminRequirePermissions("transactions.view"), adminHandler.GetTransactionDetail)
 
 				adminProtected.GET("/deposits", middleware.AdminRequirePermissions("deposits.view"), adminHandler.ListDeposits)
+				adminProtected.GET("/deposits/:id", middleware.AdminRequirePermissions("deposits.view"), adminHandler.GetDepositDetail)
 				adminProtected.POST("/deposits/:id/approve", middleware.AdminRequirePermissions("deposits.approve"), adminHandler.ApproveDeposit)
 				adminProtected.POST("/deposits/:id/reject", middleware.AdminRequirePermissions("deposits.approve"), adminHandler.RejectDeposit)
 
 				adminProtected.GET("/qris", middleware.AdminRequirePermissions("qris.view"), adminHandler.ListQris)
+				adminProtected.GET("/qris/:id", middleware.AdminRequirePermissions("qris.view"), adminHandler.GetQrisDetail)
 
 				adminProtected.GET("/vouchers", middleware.AdminRequirePermissions("vouchers.view"), adminHandler.ListVouchers)
+				adminProtected.GET("/vouchers/:id", middleware.AdminRequirePermissions("vouchers.view"), adminHandler.GetVoucherDetail)
 				adminProtected.POST("/vouchers", middleware.AdminRequirePermissions("vouchers.manage"), adminHandler.CreateVoucher)
 				adminProtected.PATCH("/vouchers/:id", middleware.AdminRequirePermissions("vouchers.manage"), adminHandler.UpdateVoucher)
 				adminProtected.PATCH("/vouchers/:id/status", middleware.AdminRequirePermissions("vouchers.manage"), adminHandler.UpdateVoucherStatus)
@@ -294,6 +303,7 @@ func main() {
 				adminProtected.POST("/finance/balance-adjustments", middleware.AdminRequirePermissions("finance.adjust_balance"), adminHandler.CreateBalanceAdjustmentRequest)
 
 				adminProtected.GET("/kyc", middleware.AdminRequirePermissions("kyc.view"), adminHandler.ListKYC)
+				adminProtected.GET("/kyc/:userId", middleware.AdminRequirePermissions("kyc.view"), adminHandler.GetKYCDetail)
 				adminProtected.POST("/kyc/:userId/approve", middleware.AdminRequirePermissions("kyc.approve"), adminHandler.ApproveKYC)
 				adminProtected.POST("/kyc/:userId/reject", middleware.AdminRequirePermissions("kyc.approve"), adminHandler.RejectKYC)
 

@@ -381,6 +381,90 @@ func (s *AdminService) CreateInvite(ctx context.Context, actorID string, req Cre
 	}, nil
 }
 
+func (s *AdminService) RequestPasswordReset(ctx context.Context, email, ipAddress, userAgent string) error {
+	if !validator.ValidateEmail(email) {
+		return domain.ErrValidationFailed("Email admin tidak valid")
+	}
+
+	admin, err := s.repo.FindAdminByEmail(ctx, strings.TrimSpace(strings.ToLower(email)))
+	if err != nil {
+		return fmt.Errorf("failed to get admin: %w", err)
+	}
+	if admin == nil || !admin.IsActive || admin.Status != domain.AdminStatusActive || !admin.PasswordHash.Valid {
+		return nil
+	}
+
+	rawToken, tokenHash, err := generateSecureToken()
+	if err != nil {
+		return fmt.Errorf("failed to generate reset token: %w", err)
+	}
+
+	reset := &domain.AdminPasswordReset{
+		ID:          "apw_" + uuid.New().String()[:8],
+		AdminUserID: admin.ID,
+		Email:       admin.Email,
+		TokenHash:   tokenHash,
+		ExpiresAt:   time.Now().Add(30 * time.Minute),
+		RequestedBy: sqlNullString(ipAddress),
+		CreatedAt:   time.Now(),
+	}
+	if err := s.repo.CreatePasswordReset(ctx, reset); err != nil {
+		return fmt.Errorf("failed to create password reset: %w", err)
+	}
+
+	resetLink := fmt.Sprintf("%s/reset-password?token=%s", strings.TrimRight(s.cfg.FrontendURL, "/"), rawToken)
+	_ = s.emailService.SendAdminPasswordReset(ctx, admin.Email, admin.DisplayName(), resetLink)
+	_ = s.logAudit(ctx, admin.ID, "admin.password_reset.request", "admin_user", admin.ID, nil, map[string]interface{}{
+		"email": admin.Email,
+	}, ipAddress, userAgent, "success", nil)
+
+	return nil
+}
+
+func (s *AdminService) GetPasswordResetPreview(ctx context.Context, rawToken string) (*domain.AdminPasswordResetPreviewResponse, error) {
+	reset, admin, err := s.requireActivePasswordReset(ctx, rawToken)
+	if err != nil {
+		return nil, err
+	}
+	return &domain.AdminPasswordResetPreviewResponse{
+		Email:     admin.Email,
+		ExpiresAt: reset.ExpiresAt.Format(time.RFC3339),
+	}, nil
+}
+
+func (s *AdminService) ConfirmPasswordReset(ctx context.Context, rawToken, newPassword, totpCode, recoveryCode, ipAddress, userAgent string) error {
+	reset, admin, err := s.requireActivePasswordReset(ctx, rawToken)
+	if err != nil {
+		return err
+	}
+	if len(strings.TrimSpace(newPassword)) < 8 {
+		return domain.ErrValidationFailed("Password admin minimal 8 karakter")
+	}
+	if err := s.validateResetSecondFactor(ctx, admin.ID, totpCode, recoveryCode); err != nil {
+		return err
+	}
+
+	passwordHash, err := hash.HashPIN(newPassword)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	if err := s.repo.UpdateAdminPassword(ctx, admin.ID, passwordHash); err != nil {
+		return fmt.Errorf("failed to update admin password: %w", err)
+	}
+	if err := s.repo.MarkPasswordResetUsed(ctx, reset.ID); err != nil {
+		return fmt.Errorf("failed to mark password reset used: %w", err)
+	}
+	if err := s.repo.DeleteSessionsByAdminID(ctx, admin.ID); err != nil {
+		return fmt.Errorf("failed to delete admin sessions: %w", err)
+	}
+
+	_ = s.logAudit(ctx, admin.ID, "admin.password_reset.confirm", "admin_user", admin.ID, nil, map[string]interface{}{
+		"method": map[bool]string{true: "recovery_code", false: "totp"}[strings.TrimSpace(recoveryCode) != ""],
+	}, ipAddress, userAgent, "success", nil)
+	return nil
+}
+
 func (s *AdminService) ListRoles(ctx context.Context) ([]domain.AdminRole, error) {
 	return s.repo.ListRoles(ctx)
 }
@@ -444,6 +528,76 @@ func (s *AdminService) requireActiveInvite(ctx context.Context, rawToken string)
 		return nil, nil, domain.ErrValidationFailed("Role undangan admin tidak ditemukan")
 	}
 	return invite, role, nil
+}
+
+func (s *AdminService) requireActivePasswordReset(ctx context.Context, rawToken string) (*domain.AdminPasswordReset, *domain.AdminUser, error) {
+	if strings.TrimSpace(rawToken) == "" {
+		return nil, nil, domain.ErrValidationFailed("Token reset password tidak valid")
+	}
+
+	reset, err := s.repo.FindPasswordResetByTokenHash(ctx, hash.HashToken(rawToken))
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get password reset: %w", err)
+	}
+	if reset == nil {
+		return nil, nil, domain.NewError("ADMIN_PASSWORD_RESET_NOT_FOUND", "Link reset password tidak ditemukan", 404)
+	}
+	if reset.UsedAt.Valid {
+		return nil, nil, domain.NewError("ADMIN_PASSWORD_RESET_USED", "Link reset password sudah digunakan", 409)
+	}
+	if time.Now().After(reset.ExpiresAt) {
+		return nil, nil, domain.NewError("ADMIN_PASSWORD_RESET_EXPIRED", "Link reset password sudah kadaluarsa", 410)
+	}
+
+	admin, err := s.repo.FindAdminByID(ctx, reset.AdminUserID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get admin for password reset: %w", err)
+	}
+	if admin == nil || !admin.IsActive || admin.Status != domain.AdminStatusActive {
+		return nil, nil, domain.NewError("ADMIN_DISABLED", "Akun admin tidak aktif", 403)
+	}
+
+	return reset, admin, nil
+}
+
+func (s *AdminService) validateResetSecondFactor(ctx context.Context, adminID, totpCode, recoveryCode string) error {
+	if strings.TrimSpace(totpCode) == "" && strings.TrimSpace(recoveryCode) == "" {
+		return domain.ErrValidationFailed("Isi kode authenticator atau recovery code")
+	}
+
+	if strings.TrimSpace(totpCode) != "" {
+		totpSecret, err := s.repo.FindTOTPSecretByAdminID(ctx, adminID)
+		if err != nil {
+			return fmt.Errorf("failed to get totp secret: %w", err)
+		}
+		if totpSecret == nil || !totpSecret.ConfirmedAt.Valid {
+			return domain.NewError("ADMIN_TOTP_NOT_READY", "Authenticator admin belum aktif", 403)
+		}
+		if !validateTOTPCode(totpCode, totpSecret.Secret) {
+			return domain.NewError("ADMIN_TOTP_INVALID", "Kode authenticator salah", 401)
+		}
+		return nil
+	}
+
+	codes, err := s.repo.ListRecoveryCodes(ctx, adminID)
+	if err != nil {
+		return fmt.Errorf("failed to get recovery codes: %w", err)
+	}
+
+	targetHash := hash.HashToken(strings.ToUpper(strings.TrimSpace(recoveryCode)))
+	for _, code := range codes {
+		if code.UsedAt.Valid {
+			continue
+		}
+		if code.CodeHash == targetHash {
+			if err := s.repo.MarkRecoveryCodeUsed(ctx, code.ID); err != nil {
+				return fmt.Errorf("failed to mark recovery code used: %w", err)
+			}
+			return nil
+		}
+	}
+
+	return domain.NewError("ADMIN_RECOVERY_CODE_INVALID", "Recovery code tidak valid", 401)
 }
 
 func (s *AdminService) logAudit(ctx context.Context, adminID, action, resourceType, resourceID string, oldValue, newValue interface{}, ipAddress, userAgent, status string, errMessage *string) error {

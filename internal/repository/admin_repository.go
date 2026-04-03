@@ -121,6 +121,15 @@ func (r *AdminRepository) UpdateAdminPasswordAndStatus(ctx context.Context, admi
 	return err
 }
 
+func (r *AdminRepository) UpdateAdminPassword(ctx context.Context, adminID, passwordHash string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE admin_users
+		SET password_hash = $2, updated_at = NOW()
+		WHERE id = $1
+	`, adminID, passwordHash)
+	return err
+}
+
 func (r *AdminRepository) UpdateAdminStatus(ctx context.Context, adminID, status string, isActive bool) error {
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE admin_users
@@ -282,6 +291,50 @@ func (r *AdminRepository) MarkInviteAccepted(ctx context.Context, inviteID strin
 	return err
 }
 
+func (r *AdminRepository) CreatePasswordReset(ctx context.Context, reset *domain.AdminPasswordReset) error {
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO admin_password_resets (
+			id, admin_user_id, email, token_hash, expires_at, used_at, requested_by, created_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+	`,
+		reset.ID,
+		reset.AdminUserID,
+		reset.Email,
+		reset.TokenHash,
+		reset.ExpiresAt,
+		reset.UsedAt,
+		reset.RequestedBy,
+		reset.CreatedAt,
+	)
+	return err
+}
+
+func (r *AdminRepository) FindPasswordResetByTokenHash(ctx context.Context, tokenHash string) (*domain.AdminPasswordReset, error) {
+	var reset domain.AdminPasswordReset
+	err := r.db.GetContext(ctx, &reset, `
+		SELECT id, admin_user_id, email, token_hash, expires_at, used_at, requested_by, created_at
+		FROM admin_password_resets
+		WHERE token_hash = $1
+		LIMIT 1
+	`, tokenHash)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &reset, nil
+}
+
+func (r *AdminRepository) MarkPasswordResetUsed(ctx context.Context, resetID string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE admin_password_resets
+		SET used_at = NOW()
+		WHERE id = $1
+	`, resetID)
+	return err
+}
+
 func (r *AdminRepository) UpsertTOTPSecret(ctx context.Context, adminUserID, secret string) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO admin_totp_secrets (admin_user_id, secret, confirmed_at, created_at, updated_at)
@@ -357,6 +410,28 @@ func (r *AdminRepository) ReplaceRecoveryCodes(ctx context.Context, adminUserID 
 	return tx.Commit()
 }
 
+func (r *AdminRepository) ListRecoveryCodes(ctx context.Context, adminUserID string) ([]domain.AdminRecoveryCode, error) {
+	var codes []domain.AdminRecoveryCode
+	if err := r.db.SelectContext(ctx, &codes, `
+		SELECT id, admin_user_id, code_hash, used_at, created_at
+		FROM admin_recovery_codes
+		WHERE admin_user_id = $1
+		ORDER BY created_at ASC
+	`, adminUserID); err != nil {
+		return nil, err
+	}
+	return codes, nil
+}
+
+func (r *AdminRepository) MarkRecoveryCodeUsed(ctx context.Context, codeID string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE admin_recovery_codes
+		SET used_at = NOW()
+		WHERE id = $1 AND used_at IS NULL
+	`, codeID)
+	return err
+}
+
 func (r *AdminRepository) CreateSession(ctx context.Context, session *domain.AdminSession) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO admin_sessions (
@@ -407,6 +482,11 @@ func (r *AdminRepository) TouchSession(ctx context.Context, sessionID string) er
 
 func (r *AdminRepository) DeleteSession(ctx context.Context, sessionID string) error {
 	_, err := r.db.ExecContext(ctx, `DELETE FROM admin_sessions WHERE id = $1`, sessionID)
+	return err
+}
+
+func (r *AdminRepository) DeleteSessionsByAdminID(ctx context.Context, adminUserID string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM admin_sessions WHERE admin_user_id = $1`, adminUserID)
 	return err
 }
 
@@ -584,6 +664,37 @@ func (r *AdminRepository) ListAdmins(ctx context.Context, search string, page, p
 	return items, total, err
 }
 
+func (r *AdminRepository) GetAdminDetail(ctx context.Context, adminID string) (map[string]interface{}, error) {
+	items, err := r.selectMaps(ctx, `
+		SELECT
+			au.id,
+			au.email,
+			au.phone,
+			COALESCE(au.full_name, '') AS full_name,
+			au.status,
+			au.is_active,
+			au.last_login_at,
+			au.created_at,
+			au.updated_at,
+			COALESCE(STRING_AGG(DISTINCT ar.name, ', '), '') AS roles,
+			(SELECT COUNT(*) FROM admin_sessions s WHERE s.admin_user_id = au.id AND s.expires_at > NOW()) AS active_sessions,
+			(SELECT COUNT(*) FROM admin_audit_logs l WHERE l.admin_user_id = au.id) AS audit_events
+		FROM admin_users au
+		LEFT JOIN admin_user_roles aur ON aur.admin_user_id = au.id
+		LEFT JOIN admin_roles ar ON ar.id = aur.role_id
+		WHERE au.id = $1
+		GROUP BY au.id
+		LIMIT 1
+	`, adminID)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, nil
+	}
+	return items[0], nil
+}
+
 func (r *AdminRepository) ListCustomers(ctx context.Context, search string, page, perPage int) ([]map[string]interface{}, int, error) {
 	base := `
 		FROM users u
@@ -611,6 +722,38 @@ func (r *AdminRepository) ListCustomers(ctx context.Context, search string, page
 		LIMIT $` + fmt.Sprintf("%d", len(args)+1) + ` OFFSET $` + fmt.Sprintf("%d", len(args)+2)
 	items, err := r.selectMaps(ctx, query, append(args, sanitizePageSize(perPage), calculateOffset(page, perPage))...)
 	return items, total, err
+}
+
+func (r *AdminRepository) GetCustomerDetail(ctx context.Context, userID string) (map[string]interface{}, error) {
+	items, err := r.selectMaps(ctx, `
+		SELECT
+			u.id,
+			u.mic,
+			u.phone,
+			COALESCE(u.full_name, '') AS full_name,
+			COALESCE(u.email::text, '') AS email,
+			u.tier,
+			u.kyc_status,
+			u.is_active,
+			u.created_at,
+			u.updated_at,
+			COALESCE(b.amount, 0) AS balance,
+			(SELECT COUNT(*) FROM transactions t WHERE t.user_id = u.id) AS transaction_count,
+			(SELECT COUNT(*) FROM deposits d WHERE d.user_id = u.id) AS deposit_count,
+			(SELECT COUNT(*) FROM qris_incomes qi WHERE qi.user_id = u.id) AS qris_count,
+			(SELECT MAX(t.created_at) FROM transactions t WHERE t.user_id = u.id) AS last_transaction_at
+		FROM users u
+		LEFT JOIN balances b ON b.user_id = u.id
+		WHERE u.id = $1
+		LIMIT 1
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, nil
+	}
+	return items[0], nil
 }
 
 func (r *AdminRepository) ListTransactions(ctx context.Context, search, status string, page, perPage int) ([]map[string]interface{}, int, error) {
@@ -667,6 +810,42 @@ func (r *AdminRepository) ListTransactions(ctx context.Context, search, status s
 	return items, total, err
 }
 
+func (r *AdminRepository) GetTransactionDetail(ctx context.Context, transactionID string) (map[string]interface{}, error) {
+	items, err := r.selectMaps(ctx, `
+		SELECT
+			t.id,
+			t.user_id,
+			t.type,
+			t.service_type,
+			t.target,
+			COALESCE(t.product_name, '') AS product_name,
+			t.total_payment,
+			t.price,
+			t.admin_fee,
+			t.selling_price,
+			t.selling_payment_type,
+			t.status,
+			COALESCE(t.status_message, '') AS status_message,
+			COALESCE(t.reference_number, '') AS reference_number,
+			t.created_at,
+			t.updated_at,
+			COALESCE(u.full_name, '') AS user_name,
+			u.phone AS user_phone,
+			COALESCE(u.email::text, '') AS user_email
+		FROM transactions t
+		INNER JOIN users u ON u.id = t.user_id
+		WHERE t.id = $1
+		LIMIT 1
+	`, transactionID)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, nil
+	}
+	return items[0], nil
+}
+
 func (r *AdminRepository) ListDeposits(ctx context.Context, search, status string, page, perPage int) ([]map[string]interface{}, int, error) {
 	base := `
 		FROM deposits d
@@ -718,6 +897,39 @@ func (r *AdminRepository) ListDeposits(ctx context.Context, search, status strin
 	return items, total, err
 }
 
+func (r *AdminRepository) GetDepositDetail(ctx context.Context, depositID string) (map[string]interface{}, error) {
+	items, err := r.selectMaps(ctx, `
+		SELECT
+			d.id,
+			d.user_id,
+			d.method,
+			d.amount,
+			d.admin_fee,
+			d.total_amount,
+			d.status,
+			COALESCE(d.reference_number, '') AS reference_number,
+			COALESCE(d.external_id, '') AS external_id,
+			d.expires_at,
+			d.paid_at,
+			d.created_at,
+			d.updated_at,
+			COALESCE(u.full_name, '') AS user_name,
+			u.phone AS user_phone,
+			COALESCE(u.email::text, '') AS user_email
+		FROM deposits d
+		INNER JOIN users u ON u.id = d.user_id
+		WHERE d.id = $1
+		LIMIT 1
+	`, depositID)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, nil
+	}
+	return items[0], nil
+}
+
 func (r *AdminRepository) FindDepositRow(ctx context.Context, depositID string) (map[string]interface{}, error) {
 	items, err := r.selectMaps(ctx, `
 		SELECT id, user_id, total_amount, status, method, reference_number, external_id
@@ -766,6 +978,39 @@ func (r *AdminRepository) ListQrisIncomes(ctx context.Context, search string, pa
 	return items, total, err
 }
 
+func (r *AdminRepository) GetQrisIncomeDetail(ctx context.Context, qrisID string) (map[string]interface{}, error) {
+	items, err := r.selectMaps(ctx, `
+		SELECT
+			qi.id,
+			qi.user_id,
+			COALESCE(qi.merchant_name, '') AS merchant_name,
+			COALESCE(qi.payer_name, '') AS payer_name,
+			COALESCE(qi.payer_bank, '') AS payer_bank,
+			qi.amount,
+			qi.fee,
+			qi.net_amount,
+			qi.status,
+			COALESCE(qi.rrn, '') AS rrn,
+			COALESCE(qi.reference_number, '') AS reference_number,
+			qi.completed_at,
+			qi.created_at,
+			COALESCE(u.full_name, '') AS user_name,
+			u.phone AS user_phone,
+			COALESCE(u.email::text, '') AS user_email
+		FROM qris_incomes qi
+		INNER JOIN users u ON u.id = qi.user_id
+		WHERE qi.id = $1
+		LIMIT 1
+	`, qrisID)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, nil
+	}
+	return items[0], nil
+}
+
 func (r *AdminRepository) ListVouchers(ctx context.Context, search string, page, perPage int) ([]map[string]interface{}, int, error) {
 	base := ` FROM vouchers v `
 	where, args := buildSearchWhere(search, 1, "v.code", "v.name", "COALESCE(v.description, '')")
@@ -784,6 +1029,41 @@ func (r *AdminRepository) ListVouchers(ctx context.Context, search string, page,
 		LIMIT $` + fmt.Sprintf("%d", len(args)+1) + ` OFFSET $` + fmt.Sprintf("%d", len(args)+2)
 	items, err := r.selectMaps(ctx, query, append(args, sanitizePageSize(perPage), calculateOffset(page, perPage))...)
 	return items, total, err
+}
+
+func (r *AdminRepository) GetVoucherDetail(ctx context.Context, voucherID string) (map[string]interface{}, error) {
+	items, err := r.selectMaps(ctx, `
+		SELECT
+			v.id,
+			v.code,
+			v.name,
+			COALESCE(v.description, '') AS description,
+			v.discount_type,
+			v.discount_value,
+			v.min_transaction,
+			v.max_discount,
+			v.applicable_services,
+			v.max_usage,
+			v.current_usage,
+			v.max_usage_per_user,
+			COALESCE(v.terms_url, '') AS terms_url,
+			v.starts_at,
+			v.expires_at,
+			v.is_active,
+			v.created_at,
+			v.updated_at,
+			(SELECT COUNT(*) FROM voucher_usages vu WHERE vu.voucher_id = v.id) AS usage_events
+		FROM vouchers v
+		WHERE v.id = $1
+		LIMIT 1
+	`, voucherID)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, nil
+	}
+	return items[0], nil
 }
 
 func (r *AdminRepository) CreateVoucher(ctx context.Context, payload map[string]interface{}) error {
@@ -928,6 +1208,51 @@ func (r *AdminRepository) ListKYC(ctx context.Context, search, status string, pa
 		LIMIT $` + fmt.Sprintf("%d", len(args)+1) + ` OFFSET $` + fmt.Sprintf("%d", len(args)+2)
 	items, err := r.selectMaps(ctx, query, append(args, sanitizePageSize(perPage), calculateOffset(page, perPage))...)
 	return items, total, err
+}
+
+func (r *AdminRepository) GetKYCDetail(ctx context.Context, userID string) (map[string]interface{}, error) {
+	items, err := r.selectMaps(ctx, `
+		SELECT
+			u.id AS user_id,
+			COALESCE(u.full_name, '') AS full_name,
+			u.phone,
+			COALESCE(u.email::text, '') AS email,
+			u.kyc_status,
+			u.created_at,
+			u.updated_at,
+			COALESCE(kv.nik, '') AS nik,
+			COALESCE(kv.full_name, '') AS kyc_full_name,
+			COALESCE(kv.place_of_birth, '') AS place_of_birth,
+			kv.date_of_birth,
+			COALESCE(kv.gender, '') AS gender,
+			COALESCE(kv.address_street, '') AS address_street,
+			COALESCE(kv.address_rt, '') AS address_rt,
+			COALESCE(kv.address_rw, '') AS address_rw,
+			COALESCE(kv.address_sub_district, '') AS address_sub_district,
+			COALESCE(kv.address_district, '') AS address_district,
+			COALESCE(kv.address_city, '') AS address_city,
+			COALESCE(kv.address_province, '') AS address_province,
+			COALESCE(kv.religion, '') AS religion,
+			COALESCE(kv.administrative_code, '{}'::jsonb) AS administrative_code,
+			COALESCE(kv.ktp_url, '') AS ktp_url,
+			COALESCE(kv.face_url, '') AS face_url,
+			COALESCE(kv.face_with_ktp_url, '') AS face_with_ktp_url,
+			COALESCE(kv.liveness_url, '') AS liveness_url,
+			kv.face_similarity,
+			kv.liveness_confidence,
+			kv.verified_at
+		FROM users u
+		LEFT JOIN kyc_verifications kv ON kv.user_id = u.id
+		WHERE u.id = $1
+		LIMIT 1
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, nil
+	}
+	return items[0], nil
 }
 
 func (r *AdminRepository) UpdateUserKYCStatus(ctx context.Context, userID, status string) error {

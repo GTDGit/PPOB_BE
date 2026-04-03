@@ -28,6 +28,17 @@ type adminRefreshRequest struct {
 	RefreshToken string `json:"refreshToken" binding:"required"`
 }
 
+type adminForgotPasswordRequest struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
+type adminResetPasswordRequest struct {
+	Token        string `json:"token" binding:"required"`
+	NewPassword  string `json:"newPassword" binding:"required"`
+	TOTPCode     string `json:"totpCode"`
+	RecoveryCode string `json:"recoveryCode"`
+}
+
 type adminAcceptInviteRequest struct {
 	Token    string `json:"token" binding:"required"`
 	FullName string `json:"fullName" binding:"required"`
@@ -106,6 +117,45 @@ func (h *AdminHandler) Refresh(c *gin.Context) {
 		return
 	}
 	respondWithSuccess(c, http.StatusOK, resp)
+}
+
+func (h *AdminHandler) ForgotPassword(c *gin.Context) {
+	var req adminForgotPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondWithError(c, domain.ErrValidationFailed("Body request lupa password admin tidak valid"))
+		return
+	}
+	if err := h.adminService.RequestPasswordReset(c.Request.Context(), req.Email, c.ClientIP(), c.Request.UserAgent()); err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	respondWithSuccess(c, http.StatusOK, gin.H{
+		"message": "Jika email terdaftar, link reset password sudah dikirim.",
+	})
+}
+
+func (h *AdminHandler) GetPasswordResetPreview(c *gin.Context) {
+	resp, err := h.adminService.GetPasswordResetPreview(c.Request.Context(), c.Param("token"))
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	respondWithSuccess(c, http.StatusOK, resp)
+}
+
+func (h *AdminHandler) ResetPassword(c *gin.Context) {
+	var req adminResetPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondWithError(c, domain.ErrValidationFailed("Body request reset password admin tidak valid"))
+		return
+	}
+	if err := h.adminService.ConfirmPasswordReset(c.Request.Context(), req.Token, req.NewPassword, req.TOTPCode, req.RecoveryCode, c.ClientIP(), c.Request.UserAgent()); err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	respondWithSuccess(c, http.StatusOK, gin.H{
+		"message": "Password admin berhasil diperbarui. Silakan login kembali.",
+	})
 }
 
 func (h *AdminHandler) Logout(c *gin.Context) {
@@ -201,6 +251,15 @@ func (h *AdminHandler) ListAdmins(c *gin.Context) {
 	respondWithSuccess(c, http.StatusOK, resp)
 }
 
+func (h *AdminHandler) GetAdminDetail(c *gin.Context) {
+	resp, err := h.adminService.GetAdminDetail(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	respondWithSuccess(c, http.StatusOK, resp)
+}
+
 func (h *AdminHandler) CreateInvite(c *gin.Context) {
 	var req adminCreateInviteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -242,6 +301,15 @@ func (h *AdminHandler) ListCustomers(c *gin.Context) {
 	respondWithSuccess(c, http.StatusOK, resp)
 }
 
+func (h *AdminHandler) GetCustomerDetail(c *gin.Context) {
+	resp, err := h.adminService.GetCustomerDetail(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	respondWithSuccess(c, http.StatusOK, resp)
+}
+
 func (h *AdminHandler) ListTransactions(c *gin.Context) {
 	resp, err := h.adminService.ListTransactions(c.Request.Context(), c.Query("search"), c.Query("status"), queryInt(c, "page", 1), queryInt(c, "perPage", 20))
 	if err != nil {
@@ -251,8 +319,26 @@ func (h *AdminHandler) ListTransactions(c *gin.Context) {
 	respondWithSuccess(c, http.StatusOK, resp)
 }
 
+func (h *AdminHandler) GetTransactionDetail(c *gin.Context) {
+	resp, err := h.adminService.GetTransactionDetail(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	respondWithSuccess(c, http.StatusOK, resp)
+}
+
 func (h *AdminHandler) ListDeposits(c *gin.Context) {
 	resp, err := h.adminService.ListDeposits(c.Request.Context(), c.Query("search"), c.Query("status"), queryInt(c, "page", 1), queryInt(c, "perPage", 20))
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	respondWithSuccess(c, http.StatusOK, resp)
+}
+
+func (h *AdminHandler) GetDepositDetail(c *gin.Context) {
+	resp, err := h.adminService.GetDepositDetail(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		handleServiceError(c, err)
 		return
@@ -285,6 +371,15 @@ func (h *AdminHandler) ListQris(c *gin.Context) {
 	respondWithSuccess(c, http.StatusOK, resp)
 }
 
+func (h *AdminHandler) GetQrisDetail(c *gin.Context) {
+	resp, err := h.adminService.GetQrisDetail(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	respondWithSuccess(c, http.StatusOK, resp)
+}
+
 func queryInt(c *gin.Context, key string, fallback int) int {
 	value := c.Query(key)
 	if value == "" {
@@ -299,6 +394,15 @@ func queryInt(c *gin.Context, key string, fallback int) int {
 
 func (h *AdminHandler) ListVouchers(c *gin.Context) {
 	resp, err := h.adminService.ListVouchers(c.Request.Context(), c.Query("search"), queryInt(c, "page", 1), queryInt(c, "perPage", 20))
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	respondWithSuccess(c, http.StatusOK, resp)
+}
+
+func (h *AdminHandler) GetVoucherDetail(c *gin.Context) {
+	resp, err := h.adminService.GetVoucherDetail(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		handleServiceError(c, err)
 		return
@@ -404,6 +508,15 @@ func (h *AdminHandler) CreateBalanceAdjustmentRequest(c *gin.Context) {
 
 func (h *AdminHandler) ListKYC(c *gin.Context) {
 	resp, err := h.adminService.ListKYC(c.Request.Context(), c.Query("search"), c.Query("status"), queryInt(c, "page", 1), queryInt(c, "perPage", 20))
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	respondWithSuccess(c, http.StatusOK, resp)
+}
+
+func (h *AdminHandler) GetKYCDetail(c *gin.Context) {
+	resp, err := h.adminService.GetKYCDetail(c.Request.Context(), c.Param("userId"))
 	if err != nil {
 		handleServiceError(c, err)
 		return
