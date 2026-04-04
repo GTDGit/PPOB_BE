@@ -122,6 +122,21 @@ func (c *Client) UploadBytes(ctx context.Context, data []byte, folder, filename,
 	return publicURL, nil
 }
 
+// PutBytes uploads raw bytes to S3 with an exact object key.
+func (c *Client) PutBytes(ctx context.Context, data []byte, key, contentType string) error {
+	_, err := c.s3Client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:      aws.String(c.bucket),
+		Key:         aws.String(key),
+		Body:        bytes.NewReader(data),
+		ContentType: aws.String(contentType),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to upload object to s3: %w", err)
+	}
+
+	return nil
+}
+
 // DeleteFile deletes a file from S3
 func (c *Client) DeleteFile(ctx context.Context, key string) error {
 	_, err := c.s3Client.DeleteObject(ctx, &s3.DeleteObjectInput{
@@ -140,4 +155,23 @@ func (c *Client) GetPresignedURL(ctx context.Context, key string, expiration tim
 	// TODO: Implement presigned URL generation
 	// This requires aws-sdk-go-v2/service/s3/presign
 	return "", fmt.Errorf("presigned URL not implemented")
+}
+
+// GetObjectBytes downloads a private object from S3.
+func (c *Client) GetObjectBytes(ctx context.Context, key string) ([]byte, string, error) {
+	output, err := c.s3Client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(c.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to get object from s3: %w", err)
+	}
+	defer output.Body.Close()
+
+	data, err := io.ReadAll(output.Body)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to read s3 object body: %w", err)
+	}
+
+	return data, aws.ToString(output.ContentType), nil
 }

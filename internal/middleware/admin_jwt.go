@@ -97,6 +97,39 @@ func AdminRequirePermissions(required ...string) gin.HandlerFunc {
 	}
 }
 
+func AdminRequireAnyPermission(required ...string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		rawPermissions, exists := c.Get(AdminPermissionsKey)
+		if !exists {
+			c.JSON(403, domain.ErrorResponse(domain.NewError("ADMIN_FORBIDDEN", "Permission admin tidak tersedia", 403), GetRequestID(c)))
+			c.Abort()
+			return
+		}
+
+		permissions, ok := rawPermissions.([]string)
+		if !ok {
+			c.JSON(403, domain.ErrorResponse(domain.NewError("ADMIN_FORBIDDEN", "Permission admin tidak valid", 403), GetRequestID(c)))
+			c.Abort()
+			return
+		}
+
+		owned := map[string]bool{}
+		for _, permission := range permissions {
+			owned[permission] = true
+		}
+
+		for _, permission := range required {
+			if owned[permission] {
+				c.Next()
+				return
+			}
+		}
+
+		c.JSON(403, domain.ErrorResponse(domain.NewError("ADMIN_FORBIDDEN", "Anda tidak memiliki akses ke fitur ini", 403), GetRequestID(c)))
+		c.Abort()
+	}
+}
+
 func GetAdminID(c *gin.Context) string {
 	value, ok := c.Get(AdminIDKey)
 	if !ok {
@@ -117,4 +150,16 @@ func GetAdminSessionID(c *gin.Context) string {
 		return sessionID
 	}
 	return ""
+}
+
+func GetAdminPermissions(c *gin.Context) []string {
+	value, ok := c.Get(AdminPermissionsKey)
+	if !ok {
+		return nil
+	}
+	permissions, ok := value.([]string)
+	if !ok {
+		return nil
+	}
+	return permissions
 }

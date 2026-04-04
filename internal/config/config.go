@@ -16,6 +16,7 @@ type Config struct {
 	OTP           OTPConfig
 	WhatsApp      WhatsAppConfig
 	Fazpass       FazpassConfig
+	Email         EmailConfig
 	Brevo         BrevoConfig
 	Firebase      FirebaseConfig
 	Gerbang       GerbangConfig
@@ -103,6 +104,27 @@ type FazpassConfig struct {
 	APIURL      string
 	MerchantKey string
 	GatewayKey  string
+}
+
+type EmailConfig struct {
+	Provider         string
+	DefaultFromEmail string
+	DefaultFromName  string
+	ReplyToEmail     string
+	MailboxDomain    string
+	SES              SESConfig
+}
+
+type SESConfig struct {
+	Region                         string
+	AccessKeyID                    string
+	SecretAccessKey                string
+	ConfigurationSetTransactional  string
+	ConfigurationSetOperations     string
+	MailFromDomain                 string
+	InboundBucket                  string
+	InboundTopicARN                string
+	DeliveryTopicARN               string
 }
 
 type BrevoConfig struct {
@@ -239,6 +261,24 @@ func Load() (*Config, error) {
 			APIURL:      getEnv("FAZPASS_API_URL", "https://api.fazpass.com"),
 			MerchantKey: getEnv("FAZPASS_MERCHANT_KEY", ""),
 			GatewayKey:  getEnv("FAZPASS_GATEWAY_KEY", ""),
+		},
+		Email: EmailConfig{
+			Provider:         getEnv("EMAIL_PROVIDER", "brevo"),
+			DefaultFromEmail: getEnv("EMAIL_FROM_DEFAULT", "noreply@ppob.id"),
+			DefaultFromName:  getEnv("EMAIL_FROM_NAME", "PPOB.ID"),
+			ReplyToEmail:     getEnv("EMAIL_REPLY_TO", "cs@ppob.id"),
+			MailboxDomain:    getEnv("EMAIL_MAILBOX_DOMAIN", "ppob.id"),
+			SES: SESConfig{
+				Region:                        getEnv("SES_REGION", "ap-southeast-3"),
+				AccessKeyID:                   getEnv("SES_ACCESS_KEY_ID", getEnv("S3_ACCESS_KEY", "")),
+				SecretAccessKey:               getEnv("SES_SECRET_ACCESS_KEY", getEnv("S3_SECRET_KEY", "")),
+				ConfigurationSetTransactional: getEnv("SES_CONFIGURATION_SET_TRANSACTIONAL", "ppob-transactional"),
+				ConfigurationSetOperations:    getEnv("SES_CONFIGURATION_SET_OPERATIONS", "ppob-operations"),
+				MailFromDomain:                getEnv("SES_MAIL_FROM_DOMAIN", "bounce.ppob.id"),
+				InboundBucket:                 getEnv("SES_INBOUND_BUCKET", getEnv("S3_BUCKET", "")),
+				InboundTopicARN:               getEnv("SES_INBOUND_TOPIC_ARN", ""),
+				DeliveryTopicARN:              getEnv("SES_DELIVERY_TOPIC_ARN", ""),
+			},
 		},
 		Brevo: BrevoConfig{
 			APIURL:               getEnv("BREVO_API_URL", "https://api.brevo.com/v3"),

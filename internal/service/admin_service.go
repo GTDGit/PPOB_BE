@@ -235,6 +235,14 @@ func (s *AdminService) AcceptInvite(ctx context.Context, rawToken, fullName, pas
 		}
 	}
 
+	mailboxDomain := "ppob.id"
+	if s.emailService != nil && strings.TrimSpace(s.emailService.emailCfg.MailboxDomain) != "" {
+		mailboxDomain = strings.TrimSpace(s.emailService.emailCfg.MailboxDomain)
+	}
+	if _, err := s.repo.EnsurePersonalMailboxForAdmin(ctx, adminID, validator.SanitizeName(fullName), invite.Email, mailboxDomain); err != nil {
+		return nil, fmt.Errorf("failed to ensure personal mailbox: %w", err)
+	}
+
 	key, err := totp.Generate(totp.GenerateOpts{
 		Issuer:      s.cfg.TOTPIssuer,
 		AccountName: strings.ToLower(strings.TrimSpace(invite.Email)),

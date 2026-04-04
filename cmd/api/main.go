@@ -97,6 +97,19 @@ func main() {
 		log.Fatalf("Failed to initialize S3 client: %v", err)
 	}
 
+	var emailStorageClient *s3.Client
+	if cfg.Email.SES.InboundBucket != "" {
+		emailStorageClient, err = s3.NewClient(s3.Config{
+			Region:          cfg.Email.SES.Region,
+			Bucket:          cfg.Email.SES.InboundBucket,
+			AccessKeyID:     cfg.Email.SES.AccessKeyID,
+			SecretAccessKey: cfg.Email.SES.SecretAccessKey,
+		})
+		if err != nil {
+			log.Fatalf("Failed to initialize email storage client: %v", err)
+		}
+	}
+
 	var firebaseClient *firebase.Client
 	if cfg.Firebase.Enabled {
 		firebaseClient, err = firebase.NewClient(cfg.Firebase)
@@ -110,7 +123,10 @@ func main() {
 
 	// Initialize services
 	otpService := service.NewOTPService(rdb, cfg.OTP, cfg.WhatsApp, cfg.Fazpass)
-	emailService := service.NewEmailService(cfg.Brevo)
+	emailService, err := service.NewEmailService(cfg.Email, cfg.Brevo, adminRepo)
+	if err != nil {
+		log.Fatalf("Failed to initialize email service: %v", err)
+	}
 	authService := service.NewAuthService(
 		userRepo,
 		deviceRepo,
@@ -158,6 +174,7 @@ func main() {
 	kycService := service.NewKYCService(kycRepo, userRepo, gerbangClient, s3Client, cfg.Fallback.KYCEnabled)
 	sandboxService := service.NewSandboxService(historyRepo, balanceRepo, depositRepo, notificationService)
 	adminService := service.NewAdminService(adminRepo, emailService, cfg.Admin)
+	adminMailboxService := service.NewAdminMailboxService(adminRepo, emailService, emailStorageClient, cfg.Email)
 
 	// Initialize handlers
 	authHandler := handler.NewAuthHandler(authService)
@@ -176,6 +193,7 @@ func main() {
 	depositHandler := handler.NewDepositHandler(depositService, cfg.Gerbang.CallbackSecret)
 	sandboxHandler := handler.NewSandboxHandler(sandboxService)
 	adminHandler := handler.NewAdminHandler(adminService)
+	adminMailboxHandler := handler.NewAdminMailboxHandler(adminMailboxService)
 	whatsAppWebhookHandler := handler.NewWhatsAppWebhookHandler(cfg.WhatsApp)
 	gerbangWebhookHandler := handler.NewGerbangWebhookHandler(
 		prepaidService,
@@ -251,6 +269,9 @@ func main() {
 	{
 		admin := v1.Group("/admin")
 		{
+			admin.POST("/email/inbound/sns", adminMailboxHandler.InboundSNS)
+			admin.POST("/email/delivery-events/sns", adminMailboxHandler.DeliverySNS)
+
 			auth := admin.Group("/auth")
 			{
 				auth.POST("/bootstrap", adminHandler.Bootstrap)
@@ -323,6 +344,16 @@ func main() {
 				adminProtected.GET("/settings", middleware.AdminRequirePermissions("settings.view"), adminHandler.ListSettings)
 				adminProtected.PUT("/settings", middleware.AdminRequirePermissions("settings.manage"), adminHandler.UpsertSetting)
 				adminProtected.GET("/reference-data", middleware.AdminRequirePermissions("reference.view"), adminHandler.ListReferenceData)
+
+				adminProtected.GET("/mailboxes", middleware.AdminRequireAnyPermission("mailboxes.view_assigned", "mailboxes.view_all"), adminMailboxHandler.ListMailboxes)
+				adminProtected.POST("/mailboxes", middleware.AdminRequirePermissions("mailboxes.manage"), adminMailboxHandler.CreateMailbox)
+				adminProtected.PATCH("/mailboxes/:id", middleware.AdminRequirePermissions("mailboxes.manage"), adminMailboxHandler.UpdateMailbox)
+				adminProtected.GET("/mailboxes/:id/threads", middleware.AdminRequireAnyPermission("mailboxes.view_assigned", "mailboxes.view_all"), adminMailboxHandler.ListMailboxThreads)
+				adminProtected.GET("/threads/:id", middleware.AdminRequireAnyPermission("mailboxes.view_assigned", "mailboxes.view_all"), adminMailboxHandler.GetThreadDetail)
+				adminProtected.POST("/threads/:id/reply", middleware.AdminRequirePermissions("mailboxes.reply"), adminMailboxHandler.ReplyThread)
+				adminProtected.PATCH("/threads/:id/status", middleware.AdminRequirePermissions("mailboxes.status.manage"), adminMailboxHandler.UpdateThreadStatus)
+				adminProtected.PATCH("/threads/:id/assign", middleware.AdminRequirePermissions("mailboxes.assign"), adminMailboxHandler.AssignThread)
+				adminProtected.GET("/email-logs", middleware.AdminRequirePermissions("email_logs.view"), adminMailboxHandler.ListEmailLogs)
 			}
 		}
 
