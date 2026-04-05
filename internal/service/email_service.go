@@ -405,7 +405,11 @@ func (s *EmailService) sendCustomEmail(ctx context.Context, req sendCustomEmailR
 		ReplyTo:   req.ReplyTo,
 		ConfigSet: req.ConfigSet,
 	})
-	s.logTransactionalDispatch(ctx, req.Category, "", req.ToEmail, s.emailCfg.DefaultFromEmail, s.emailCfg.DefaultFromName, messageID, "queued", err, nil)
+	status := "queued"
+	if err != nil {
+		status = "failed"
+	}
+	s.logTransactionalDispatch(ctx, req.Category, "", req.ToEmail, s.emailCfg.DefaultFromEmail, s.emailCfg.DefaultFromName, messageID, status, err, nil)
 	if err != nil {
 		return err
 	}
