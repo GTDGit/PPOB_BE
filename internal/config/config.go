@@ -121,6 +121,7 @@ type SESConfig struct {
 	SecretAccessKey                string
 	ConfigurationSetTransactional  string
 	ConfigurationSetOperations     string
+	ConfigurationSetMarketing      string
 	MailFromDomain                 string
 	InboundBucket                  string
 	InboundTopicARN                string
@@ -274,6 +275,7 @@ func Load() (*Config, error) {
 				SecretAccessKey:               getEnv("SES_SECRET_ACCESS_KEY", getEnv("S3_SECRET_KEY", "")),
 				ConfigurationSetTransactional: getEnv("SES_CONFIGURATION_SET_TRANSACTIONAL", "ppob-transactional"),
 				ConfigurationSetOperations:    getEnv("SES_CONFIGURATION_SET_OPERATIONS", "ppob-operations"),
+				ConfigurationSetMarketing:     getEnv("SES_CONFIGURATION_SET_MARKETING", "ppob-marketing"),
 				MailFromDomain:                getEnv("SES_MAIL_FROM_DOMAIN", "bounce.ppob.id"),
 				InboundBucket:                 getEnv("SES_INBOUND_BUCKET", getEnv("S3_BUCKET", "")),
 				InboundTopicARN:               getEnv("SES_INBOUND_TOPIC_ARN", ""),
