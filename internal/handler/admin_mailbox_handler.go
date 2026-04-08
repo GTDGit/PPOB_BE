@@ -86,11 +86,51 @@ func (h *AdminMailboxHandler) GetThreadDetail(c *gin.Context) {
 }
 
 func (h *AdminMailboxHandler) ReplyThread(c *gin.Context) {
+	contentType := c.ContentType()
+
 	var req service.ThreadReplyRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, domain.ErrValidationFailed("Body request reply email tidak valid"))
-		return
+	if strings.Contains(contentType, "multipart/form-data") {
+		req.Body = c.PostForm("body")
+		req.HTMLBody = c.PostForm("htmlBody")
+		req.Cc = c.PostFormArray("cc")
+		req.Bcc = c.PostFormArray("bcc")
+		isImp := c.PostForm("isImportant") == "true"
+		req.IsImportant = &isImp
+
+		form, _ := c.MultipartForm()
+		if form != nil && form.File["attachments"] != nil {
+			for _, fh := range form.File["attachments"] {
+				if fh.Size > 10*1024*1024 {
+					respondWithError(c, domain.ErrValidationFailed("Ukuran file maksimal 10MB per lampiran"))
+					return
+				}
+				f, err := fh.Open()
+				if err != nil {
+					continue
+				}
+				data, err := io.ReadAll(f)
+				f.Close()
+				if err != nil {
+					continue
+				}
+				ct := fh.Header.Get("Content-Type")
+				if ct == "" {
+					ct = "application/octet-stream"
+				}
+				req.Attachments = append(req.Attachments, service.EmailAttachmentInput{
+					Filename:    fh.Filename,
+					ContentType: ct,
+					Data:        data,
+				})
+			}
+		}
+	} else {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			respondWithError(c, domain.ErrValidationFailed("Body request reply email tidak valid"))
+			return
+		}
 	}
+
 	resp, err := h.mailboxService.ReplyThread(c.Request.Context(), middleware.GetAdminID(c), c.Param("id"), req)
 	if err != nil {
 		handleServiceError(c, err)
@@ -126,17 +166,74 @@ func (h *AdminMailboxHandler) AssignThread(c *gin.Context) {
 }
 
 func (h *AdminMailboxHandler) ComposeEmail(c *gin.Context) {
+	contentType := c.ContentType()
+
 	var req service.ComposeEmailRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		respondWithError(c, domain.ErrValidationFailed("Body request compose email tidak valid"))
-		return
+	if strings.Contains(contentType, "multipart/form-data") {
+		req.MailboxID = c.PostForm("mailboxId")
+		req.Subject = c.PostForm("subject")
+		req.Body = c.PostForm("body")
+		req.HTMLBody = c.PostForm("htmlBody")
+		req.IsImportant = c.PostForm("isImportant") == "true"
+		req.To = c.PostFormArray("to")
+		req.Cc = c.PostFormArray("cc")
+		req.Bcc = c.PostFormArray("bcc")
+
+		form, _ := c.MultipartForm()
+		if form != nil && form.File["attachments"] != nil {
+			for _, fh := range form.File["attachments"] {
+				if fh.Size > 10*1024*1024 {
+					respondWithError(c, domain.ErrValidationFailed("Ukuran file maksimal 10MB per lampiran"))
+					return
+				}
+				f, err := fh.Open()
+				if err != nil {
+					continue
+				}
+				data, err := io.ReadAll(f)
+				f.Close()
+				if err != nil {
+					continue
+				}
+				ct := fh.Header.Get("Content-Type")
+				if ct == "" {
+					ct = "application/octet-stream"
+				}
+				req.Attachments = append(req.Attachments, service.EmailAttachmentInput{
+					Filename:    fh.Filename,
+					ContentType: ct,
+					Data:        data,
+				})
+			}
+		}
+	} else {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			respondWithError(c, domain.ErrValidationFailed("Body request compose email tidak valid"))
+			return
+		}
 	}
+
 	resp, err := h.mailboxService.ComposeEmail(c.Request.Context(), middleware.GetAdminID(c), req)
 	if err != nil {
 		handleServiceError(c, err)
 		return
 	}
 	respondWithSuccess(c, http.StatusOK, resp)
+}
+
+func (h *AdminMailboxHandler) ToggleThreadImportant(c *gin.Context) {
+	var req struct {
+		IsImportant bool `json:"isImportant"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondWithError(c, domain.ErrValidationFailed("Body request tidak valid"))
+		return
+	}
+	if err := h.mailboxService.ToggleThreadImportant(c.Request.Context(), middleware.GetAdminID(c), c.Param("id"), req.IsImportant); err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	respondWithSuccess(c, http.StatusOK, gin.H{"message": "Status penting berhasil diperbarui"})
 }
 
 func (h *AdminMailboxHandler) UpdateMailboxDisplayName(c *gin.Context) {

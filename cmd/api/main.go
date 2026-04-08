@@ -77,6 +77,7 @@ func main() {
 	territoryRepo := repository.NewTerritoryRepository(db)
 	kycRepo := repository.NewKYCRepository(db)
 	adminRepo := repository.NewAdminRepository(db)
+	positionRepo := repository.NewPositionRepository(db)
 
 	// Initialize external clients
 	gerbangClient := gerbang.NewClient(gerbang.Config{
@@ -178,6 +179,7 @@ func main() {
 	kycService := service.NewKYCService(kycRepo, userRepo, gerbangClient, s3Client, cfg.Fallback.KYCEnabled)
 	sandboxService := service.NewSandboxService(historyRepo, balanceRepo, depositRepo, notificationService)
 	adminService := service.NewAdminService(adminRepo, emailService, s3Client, cfg.Admin)
+	positionService := service.NewPositionService(positionRepo, adminRepo)
 	adminMailboxService := service.NewAdminMailboxService(adminRepo, emailService, emailStorageClient, cfg.Email)
 
 	// Initialize handlers
@@ -197,6 +199,7 @@ func main() {
 	depositHandler := handler.NewDepositHandler(depositService, cfg.Gerbang.CallbackSecret)
 	sandboxHandler := handler.NewSandboxHandler(sandboxService)
 	adminHandler := handler.NewAdminHandler(adminService)
+	positionHandler := handler.NewPositionHandler(positionService)
 	adminMailboxHandler := handler.NewAdminMailboxHandler(adminMailboxService)
 	whatsAppWebhookHandler := handler.NewWhatsAppWebhookHandler(cfg.WhatsApp)
 	gerbangWebhookHandler := handler.NewGerbangWebhookHandler(
@@ -354,6 +357,18 @@ func main() {
 				adminProtected.POST("/admins/me/avatar", adminHandler.UploadAvatar)
 				adminProtected.DELETE("/admins/me/avatar", adminHandler.RemoveAvatar)
 
+				// Position management
+				positions := adminProtected.Group("/positions")
+				{
+					positions.GET("", middleware.AdminRequirePermissions("admins.view"), positionHandler.ListPositions)
+					positions.POST("", middleware.AdminRequirePermissions("admins.manage"), positionHandler.CreatePosition)
+					positions.PATCH("/:id", middleware.AdminRequirePermissions("admins.manage"), positionHandler.UpdatePosition)
+					positions.DELETE("/:id", middleware.AdminRequirePermissions("admins.manage"), positionHandler.DeletePosition)
+					positions.GET("/:id/admins", middleware.AdminRequirePermissions("admins.view"), positionHandler.GetPositionAdmins)
+					positions.POST("/:id/assign", middleware.AdminRequirePermissions("admins.manage"), positionHandler.AssignPosition)
+				}
+				adminProtected.DELETE("/admins/:id/position", middleware.AdminRequirePermissions("admins.manage"), positionHandler.RemoveAdminPosition)
+
 				adminProtected.POST("/email/compose", middleware.AdminRequirePermissions("mailboxes.reply"), adminMailboxHandler.ComposeEmail)
 				adminProtected.PATCH("/mailboxes/:id/display-name", middleware.AdminRequireAnyPermission("mailboxes.manage", "mailboxes.reply"), adminMailboxHandler.UpdateMailboxDisplayName)
 
@@ -364,6 +379,7 @@ func main() {
 				adminProtected.GET("/threads/:id", middleware.AdminRequireAnyPermission("mailboxes.view_assigned", "mailboxes.view_all"), adminMailboxHandler.GetThreadDetail)
 				adminProtected.POST("/threads/:id/reply", middleware.AdminRequirePermissions("mailboxes.reply"), adminMailboxHandler.ReplyThread)
 				adminProtected.PATCH("/threads/:id/status", middleware.AdminRequirePermissions("mailboxes.status.manage"), adminMailboxHandler.UpdateThreadStatus)
+				adminProtected.PATCH("/threads/:id/important", middleware.AdminRequirePermissions("mailboxes.reply"), adminMailboxHandler.ToggleThreadImportant)
 				adminProtected.PATCH("/threads/:id/assign", middleware.AdminRequirePermissions("mailboxes.assign"), adminMailboxHandler.AssignThread)
 				adminProtected.GET("/email-logs", middleware.AdminRequirePermissions("email_logs.view"), adminMailboxHandler.ListEmailLogs)
 			}

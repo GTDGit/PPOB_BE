@@ -677,13 +677,14 @@ func (h *AdminHandler) ListReferenceData(c *gin.Context) {
 
 func (h *AdminHandler) UpdateProfile(c *gin.Context) {
 	var req struct {
-		FullName string `json:"fullName" binding:"required"`
+		FullName    string  `json:"fullName" binding:"required"`
+		LinkedinURL *string `json:"linkedinUrl"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		respondWithError(c, domain.ErrValidationFailed("Body request profil tidak valid"))
 		return
 	}
-	resp, err := h.adminService.UpdateAdminProfile(c.Request.Context(), middleware.GetAdminID(c), req.FullName)
+	resp, err := h.adminService.UpdateAdminProfile(c.Request.Context(), middleware.GetAdminID(c), req.FullName, req.LinkedinURL)
 	if err != nil {
 		handleServiceError(c, err)
 		return

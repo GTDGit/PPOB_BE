@@ -3,6 +3,7 @@ package smtp
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"fmt"
 	"mime/multipart"
 	"net"
@@ -14,6 +15,12 @@ import (
 	"github.com/GTDGit/PPOB_BE/internal/config"
 	"github.com/google/uuid"
 )
+
+type EmailAttachment struct {
+	Filename    string
+	ContentType string
+	Data        []byte
+}
 
 type Client struct {
 	cfg config.SMTPConfig
@@ -30,6 +37,7 @@ type SendMessageInput struct {
 	HTMLBody         string
 	TextBody         string
 	Headers          map[string]string
+	Attachments      []EmailAttachment
 }
 
 func NewClient(cfg config.SMTPConfig) *Client {
@@ -215,8 +223,75 @@ func buildMessage(input SendMessageInput, messageID string) []byte {
 
 	hasHTML := strings.TrimSpace(input.HTMLBody) != ""
 	hasText := strings.TrimSpace(input.TextBody) != ""
+	hasAttachments := len(input.Attachments) > 0
 
-	if hasHTML && hasText {
+	if hasAttachments {
+		// multipart/mixed: body part (alternative or single) + attachment parts
+		mixedBoundary := fmt.Sprintf("mixed_%s", uuid.New().String()[:8])
+		buf.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=\"%s\"\r\n", mixedBoundary))
+		buf.WriteString("\r\n")
+
+		mixedWriter := multipart.NewWriter(&buf)
+		mixedWriter.SetBoundary(mixedBoundary)
+
+		// Write body part
+		if hasHTML && hasText {
+			altBoundary := fmt.Sprintf("alt_%s", uuid.New().String()[:8])
+			bodyPart, _ := mixedWriter.CreatePart(textproto.MIMEHeader{
+				"Content-Type": {fmt.Sprintf("multipart/alternative; boundary=\"%s\"", altBoundary)},
+			})
+			altWriter := multipart.NewWriter(bodyPart)
+			altWriter.SetBoundary(altBoundary)
+
+			textPart, _ := altWriter.CreatePart(textproto.MIMEHeader{
+				"Content-Type":              {"text/plain; charset=UTF-8"},
+				"Content-Transfer-Encoding": {"quoted-printable"},
+			})
+			textPart.Write([]byte(input.TextBody))
+
+			htmlPart, _ := altWriter.CreatePart(textproto.MIMEHeader{
+				"Content-Type":              {"text/html; charset=UTF-8"},
+				"Content-Transfer-Encoding": {"quoted-printable"},
+			})
+			htmlPart.Write([]byte(input.HTMLBody))
+			altWriter.Close()
+		} else if hasHTML {
+			bodyPart, _ := mixedWriter.CreatePart(textproto.MIMEHeader{
+				"Content-Type":              {"text/html; charset=UTF-8"},
+				"Content-Transfer-Encoding": {"quoted-printable"},
+			})
+			bodyPart.Write([]byte(input.HTMLBody))
+		} else {
+			bodyPart, _ := mixedWriter.CreatePart(textproto.MIMEHeader{
+				"Content-Type":              {"text/plain; charset=UTF-8"},
+				"Content-Transfer-Encoding": {"quoted-printable"},
+			})
+			bodyPart.Write([]byte(input.TextBody))
+		}
+
+		// Write attachment parts
+		for _, att := range input.Attachments {
+			ct := att.ContentType
+			if ct == "" {
+				ct = "application/octet-stream"
+			}
+			attPart, _ := mixedWriter.CreatePart(textproto.MIMEHeader{
+				"Content-Type":              {fmt.Sprintf("%s; name=\"%s\"", ct, att.Filename)},
+				"Content-Transfer-Encoding": {"base64"},
+				"Content-Disposition":       {fmt.Sprintf("attachment; filename=\"%s\"", att.Filename)},
+			})
+			encoded := base64.StdEncoding.EncodeToString(att.Data)
+			// Write base64 in 76-char lines
+			for i := 0; i < len(encoded); i += 76 {
+				end := i + 76
+				if end > len(encoded) {
+					end = len(encoded)
+				}
+				attPart.Write([]byte(encoded[i:end] + "\r\n"))
+			}
+		}
+		mixedWriter.Close()
+	} else if hasHTML && hasText {
 		boundary := fmt.Sprintf("boundary_%s", uuid.New().String()[:8])
 		buf.WriteString(fmt.Sprintf("Content-Type: multipart/alternative; boundary=\"%s\"\r\n", boundary))
 		buf.WriteString("\r\n")

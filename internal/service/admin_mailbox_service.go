@@ -20,6 +20,7 @@ import (
 	"github.com/GTDGit/PPOB_BE/internal/config"
 	"github.com/GTDGit/PPOB_BE/internal/domain"
 	internals3 "github.com/GTDGit/PPOB_BE/internal/external/s3"
+	internalsmtp "github.com/GTDGit/PPOB_BE/internal/external/smtp"
 	"github.com/GTDGit/PPOB_BE/internal/repository"
 	"github.com/google/uuid"
 	"slices"
@@ -44,10 +45,18 @@ type MailboxUpsertRequest struct {
 }
 
 type ThreadReplyRequest struct {
-	Body     string   `json:"body"`
-	HTMLBody string   `json:"htmlBody"`
-	Cc       []string `json:"cc"`
-	Bcc      []string `json:"bcc"`
+	Body        string   `json:"body"`
+	HTMLBody    string   `json:"htmlBody"`
+	Cc          []string `json:"cc"`
+	Bcc         []string `json:"bcc"`
+	IsImportant *bool    `json:"isImportant"`
+	Attachments []EmailAttachmentInput `json:"-"`
+}
+
+type EmailAttachmentInput struct {
+	Filename    string
+	ContentType string
+	Data        []byte
 }
 
 type ThreadStatusUpdateRequest struct {
@@ -426,6 +435,9 @@ func (s *AdminMailboxService) ReplyThread(ctx context.Context, adminID, threadID
 		htmlBody = fmt.Sprintf("<p style=\"white-space:pre-wrap;line-height:1.6;color:#0f172a;\">%s</p>", strings.ReplaceAll(html.EscapeString(body), "\n", "<br/>"))
 	}
 
+	// Append email signature
+	htmlBody += s.buildSignature(ctx, adminID)
+
 	messages, err := s.repo.ListThreadMessages(ctx, thread.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get thread messages: %w", err)
@@ -436,6 +448,16 @@ func (s *AdminMailboxService) ReplyThread(ctx context.Context, adminID, threadID
 	preview := buildPreview(firstNonEmpty(body, stripHTML(htmlBody)))
 	now := time.Now()
 	messageID := "aem_" + uuid.New().String()[:8]
+
+	replyHeaders := map[string]string{
+		"Message-ID":  localHeader,
+		"In-Reply-To": lastHeader,
+		"References":  strings.Join(references, " "),
+	}
+	if req.IsImportant != nil && *req.IsImportant {
+		replyHeaders["X-Priority"] = "1"
+		replyHeaders["Importance"] = "high"
+	}
 
 	providerMessageID, err := s.emailService.SendMailboxReply(ctx, MailReplyRequest{
 		Category:         "mailbox_reply",
@@ -451,16 +473,13 @@ func (s *AdminMailboxService) ReplyThread(ctx context.Context, adminID, threadID
 		Subject:          subject,
 		HTMLBody:         htmlBody,
 		TextBody:         firstNonEmpty(body, stripHTML(htmlBody)),
-		Headers: map[string]string{
-			"Message-ID":  localHeader,
-			"In-Reply-To": lastHeader,
-			"References":  strings.Join(references, " "),
-		},
+		Headers:          replyHeaders,
 		ConfigurationSet: s.emailCfg.SES.ConfigurationSetOperations,
 		Tags: map[string]string{
 			"category": "mailbox_reply",
 			"mailbox":  mailbox.Address,
 		},
+		Attachments: toSMTPAttachments(req.Attachments),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to send mailbox reply: %w", err)
@@ -530,13 +549,15 @@ func (s *AdminMailboxService) ReplyThread(ctx context.Context, adminID, threadID
 }
 
 type ComposeEmailRequest struct {
-	MailboxID string   `json:"mailboxId"`
-	To        []string `json:"to"`
-	Cc        []string `json:"cc"`
-	Bcc       []string `json:"bcc"`
-	Subject   string   `json:"subject"`
-	Body      string   `json:"body"`
-	HTMLBody  string   `json:"htmlBody"`
+	MailboxID   string   `json:"mailboxId"`
+	To          []string `json:"to"`
+	Cc          []string `json:"cc"`
+	Bcc         []string `json:"bcc"`
+	Subject     string   `json:"subject"`
+	Body        string   `json:"body"`
+	HTMLBody    string   `json:"htmlBody"`
+	IsImportant bool     `json:"isImportant"`
+	Attachments []EmailAttachmentInput `json:"-"`
 }
 
 func (s *AdminMailboxService) ComposeEmail(ctx context.Context, adminID string, req ComposeEmailRequest) (map[string]interface{}, error) {
@@ -572,6 +593,9 @@ func (s *AdminMailboxService) ComposeEmail(ctx context.Context, adminID string, 
 	if htmlBody == "" {
 		htmlBody = fmt.Sprintf("<p style=\"white-space:pre-wrap;line-height:1.6;color:#0f172a;\">%s</p>", strings.ReplaceAll(html.EscapeString(body), "\n", "<br/>"))
 	}
+
+	// Append email signature
+	htmlBody += s.buildSignature(ctx, adminID)
 
 	localHeader := generateMessageHeader(mailbox.Address)
 	preview := buildPreview(firstNonEmpty(body, stripHTML(htmlBody)))
@@ -611,6 +635,14 @@ func (s *AdminMailboxService) ComposeEmail(ctx context.Context, adminID string, 
 		return nil, fmt.Errorf("failed to create email thread: %w", err)
 	}
 
+	composeHeaders := map[string]string{
+		"Message-ID": localHeader,
+	}
+	if req.IsImportant {
+		composeHeaders["X-Priority"] = "1"
+		composeHeaders["Importance"] = "high"
+	}
+
 	providerMessageID, err := s.emailService.SendMailboxReply(ctx, MailReplyRequest{
 		Category:         "mailbox_compose",
 		MailboxID:        mailbox.ID,
@@ -625,14 +657,13 @@ func (s *AdminMailboxService) ComposeEmail(ctx context.Context, adminID string, 
 		Subject:          subject,
 		HTMLBody:         htmlBody,
 		TextBody:         firstNonEmpty(body, stripHTML(htmlBody)),
-		Headers: map[string]string{
-			"Message-ID": localHeader,
-		},
+		Headers:          composeHeaders,
 		ConfigurationSet: s.emailCfg.SES.ConfigurationSetOperations,
 		Tags: map[string]string{
 			"category": "mailbox_compose",
 			"mailbox":  mailbox.Address,
 		},
+		Attachments: toSMTPAttachments(req.Attachments),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to send composed email: %w", err)
@@ -768,6 +799,24 @@ func (s *AdminMailboxService) UpdateThreadStatus(ctx context.Context, adminID, t
 	return s.repo.AddEmailThreadEvent(ctx, threadID, admin.ID, "status_changed", fmt.Sprintf("Status thread diubah menjadi %s", status), map[string]interface{}{
 		"status": status,
 	})
+}
+
+func (s *AdminMailboxService) ToggleThreadImportant(ctx context.Context, adminID, threadID string, isImportant bool) error {
+	admin, err := s.requireAdmin(ctx, adminID)
+	if err != nil {
+		return err
+	}
+	if !hasPermission(admin, "mailboxes.reply") {
+		return domain.NewError("ADMIN_FORBIDDEN", "Anda tidak memiliki akses", 403)
+	}
+	thread, err := s.repo.FindThreadByID(ctx, threadID)
+	if err != nil {
+		return fmt.Errorf("failed to get thread: %w", err)
+	}
+	if thread == nil {
+		return domain.NewError("THREAD_NOT_FOUND", "Thread email tidak ditemukan", 404)
+	}
+	return s.repo.UpdateThreadImportant(ctx, threadID, isImportant)
 }
 
 func (s *AdminMailboxService) AssignThread(ctx context.Context, adminID, threadID string, req ThreadAssignRequest) error {
@@ -1632,4 +1681,54 @@ func mailboxOffset(page, perPage int) int {
 		perPage = 20
 	}
 	return (page - 1) * perPage
+}
+
+func toSMTPAttachments(inputs []EmailAttachmentInput) []internalsmtp.EmailAttachment {
+	if len(inputs) == 0 {
+		return nil
+	}
+	out := make([]internalsmtp.EmailAttachment, len(inputs))
+	for i, a := range inputs {
+		out[i] = internalsmtp.EmailAttachment{
+			Filename:    a.Filename,
+			ContentType: a.ContentType,
+			Data:        a.Data,
+		}
+	}
+	return out
+}
+
+func (s *AdminMailboxService) buildSignature(ctx context.Context, adminID string) string {
+	admin, err := s.repo.FindAdminByID(ctx, adminID)
+	if err != nil || admin == nil {
+		return ""
+	}
+
+	name := admin.DisplayName()
+	email := admin.Email
+
+	// Load position name
+	var positionName string
+	if admin.PositionID.Valid {
+		_ = s.repo.DB().GetContext(ctx, &positionName, `SELECT name FROM admin_positions WHERE id = $1`, admin.PositionID.String)
+	}
+
+	var linkedinURL string
+	if admin.LinkedinURL.Valid {
+		linkedinURL = admin.LinkedinURL.String
+	}
+
+	sig := `<br/><br/><div style="border-top:1px solid #e2e8f0;padding-top:12px;margin-top:12px;">`
+	sig += `<p style="font-size:13px;color:#475569;line-height:1.8;margin:0;">`
+	sig += `Best Regards,<br/>`
+	sig += `<strong style="color:#1e293b;">` + html.EscapeString(name) + `</strong><br/>`
+	if positionName != "" {
+		sig += html.EscapeString(positionName) + `<br/>`
+	}
+	sig += `Email: ` + html.EscapeString(email) + `<br/>`
+	if linkedinURL != "" {
+		sig += `LinkedIn: <a href="` + html.EscapeString(linkedinURL) + `" style="color:#2563eb;">` + html.EscapeString(linkedinURL) + `</a><br/>`
+	}
+	sig += `</p></div>`
+	return sig
 }

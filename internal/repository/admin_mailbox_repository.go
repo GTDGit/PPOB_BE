@@ -485,6 +485,15 @@ func (r *AdminRepository) UpdateThreadStatus(ctx context.Context, threadID, stat
 	return err
 }
 
+func (r *AdminRepository) UpdateThreadImportant(ctx context.Context, threadID string, isImportant bool) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE admin_email_threads
+		SET is_important = $2, updated_at = NOW()
+		WHERE id = $1
+	`, threadID, isImportant)
+	return err
+}
+
 func (r *AdminRepository) AssignThread(ctx context.Context, threadID string, assignedAdminID *string) error {
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE admin_email_threads
@@ -622,7 +631,8 @@ func (r *AdminRepository) ListThreadsByMailbox(ctx context.Context, mailboxID, s
 			aet.created_at,
 			aet.updated_at,
 			COALESCE(aet.assigned_admin_id, '') AS assigned_admin_id,
-			COALESCE(assigned_admin.full_name, assigned_admin.email, '') AS assigned_admin_name
+			COALESCE(assigned_admin.full_name, assigned_admin.email, '') AS assigned_admin_name,
+			aet.is_important
 	` + base + where + `
 		ORDER BY aet.latest_message_at DESC NULLS LAST, aet.created_at DESC
 		LIMIT $` + fmt.Sprintf("%d", argIdx) + ` OFFSET $` + fmt.Sprintf("%d", argIdx+1)
@@ -654,7 +664,8 @@ func (r *AdminRepository) GetThreadDetail(ctx context.Context, threadID string) 
 			aet.updated_at,
 			am.type AS mailbox_type,
 			am.address AS mailbox_address,
-			am.display_name AS mailbox_name
+			am.display_name AS mailbox_name,
+			aet.is_important
 		FROM admin_email_threads aet
 		INNER JOIN admin_mailboxes am ON am.id = aet.mailbox_id
 		LEFT JOIN admin_users assigned_admin ON assigned_admin.id = aet.assigned_admin_id

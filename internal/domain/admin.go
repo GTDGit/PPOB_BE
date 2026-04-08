@@ -24,6 +24,8 @@ type AdminUser struct {
 	FullName     sql.NullString `db:"full_name" json:"-"`
 	PasswordHash sql.NullString `db:"password_hash" json:"-"`
 	AvatarURL    sql.NullString `db:"avatar_url" json:"-"`
+	PositionID   sql.NullString `db:"position_id" json:"-"`
+	LinkedinURL  sql.NullString `db:"linkedin_url" json:"-"`
 	Status       string         `db:"status" json:"status"`
 	IsActive     bool           `db:"is_active" json:"isActive"`
 	LastLoginAt  sql.NullTime   `db:"last_login_at" json:"-"`
@@ -148,16 +150,19 @@ type AdminSetting struct {
 }
 
 type AdminUserSummary struct {
-	ID          string   `json:"id"`
-	Email       string   `json:"email"`
-	Phone       string   `json:"phone"`
-	FullName    string   `json:"fullName"`
-	AvatarURL   string   `json:"avatarUrl,omitempty"`
-	Status      string   `json:"status"`
-	IsActive    bool     `json:"isActive"`
-	LastLoginAt *string  `json:"lastLoginAt,omitempty"`
-	Roles       []string `json:"roles"`
-	CreatedAt   string   `json:"createdAt"`
+	ID           string   `json:"id"`
+	Email        string   `json:"email"`
+	Phone        string   `json:"phone"`
+	FullName     string   `json:"fullName"`
+	AvatarURL    string   `json:"avatarUrl,omitempty"`
+	PositionID   string   `json:"positionId,omitempty"`
+	PositionName string   `json:"positionName,omitempty"`
+	LinkedinURL  string   `json:"linkedinUrl,omitempty"`
+	Status       string   `json:"status"`
+	IsActive     bool     `json:"isActive"`
+	LastLoginAt  *string  `json:"lastLoginAt,omitempty"`
+	Roles        []string `json:"roles"`
+	CreatedAt    string   `json:"createdAt"`
 }
 
 type AdminAuthResponse struct {
@@ -238,16 +243,28 @@ func (u *AdminUser) ToSummary() *AdminUserSummary {
 		avatarURL = u.AvatarURL.String
 	}
 
+	var positionID string
+	if u.PositionID.Valid {
+		positionID = u.PositionID.String
+	}
+
+	var linkedinURL string
+	if u.LinkedinURL.Valid {
+		linkedinURL = u.LinkedinURL.String
+	}
+
 	return &AdminUserSummary{
-		ID:          u.ID,
-		Email:       u.Email,
-		Phone:       u.Phone,
-		FullName:    u.DisplayName(),
-		AvatarURL:   avatarURL,
-		Status:      u.Status,
-		IsActive:    u.IsActive,
-		LastLoginAt: lastLogin,
-		Roles:       roles,
-		CreatedAt:   u.CreatedAt.Format(time.RFC3339),
+		ID:           u.ID,
+		Email:        u.Email,
+		Phone:        u.Phone,
+		FullName:     u.DisplayName(),
+		AvatarURL:    avatarURL,
+		PositionID:   positionID,
+		LinkedinURL:  linkedinURL,
+		Status:       u.Status,
+		IsActive:     u.IsActive,
+		LastLoginAt:  lastLogin,
+		Roles:        roles,
+		CreatedAt:    u.CreatedAt.Format(time.RFC3339),
 	}
 }

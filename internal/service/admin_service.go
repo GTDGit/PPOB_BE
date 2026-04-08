@@ -172,7 +172,9 @@ func (s *AdminService) GetMe(ctx context.Context, adminID string) (*domain.Admin
 	if admin == nil {
 		return nil, nil, domain.NewError("ADMIN_NOT_FOUND", "Akun admin tidak ditemukan", 404)
 	}
-	return admin.ToSummary(), admin.Permissions, nil
+	summary := admin.ToSummary()
+	s.loadPositionName(ctx, summary)
+	return summary, admin.Permissions, nil
 }
 
 func (s *AdminService) GetInvitePreview(ctx context.Context, rawToken string) (*domain.AdminInvitePreviewResponse, error) {
@@ -698,7 +700,7 @@ func sqlNullString(value string) sql.NullString {
 	return sql.NullString{String: value, Valid: true}
 }
 
-func (s *AdminService) UpdateAdminProfile(ctx context.Context, actorID, fullName string) (map[string]interface{}, error) {
+func (s *AdminService) UpdateAdminProfile(ctx context.Context, actorID, fullName string, linkedinURL *string) (map[string]interface{}, error) {
 	fullName = strings.TrimSpace(fullName)
 	if len(fullName) < 3 {
 		return nil, domain.ErrValidationFailed("Nama lengkap minimal 3 karakter")
@@ -709,6 +711,17 @@ func (s *AdminService) UpdateAdminProfile(ctx context.Context, actorID, fullName
 
 	if err := s.repo.UpdateAdminFullName(ctx, actorID, fullName); err != nil {
 		return nil, fmt.Errorf("failed to update admin profile: %w", err)
+	}
+
+	// Update LinkedIn URL if provided
+	if linkedinURL != nil {
+		url := strings.TrimSpace(*linkedinURL)
+		if url != "" && !strings.Contains(url, "linkedin.com") {
+			return nil, domain.ErrValidationFailed("URL LinkedIn tidak valid")
+		}
+		if err := s.repo.UpdateAdminLinkedinURL(ctx, actorID, url); err != nil {
+			return nil, fmt.Errorf("failed to update linkedin url: %w", err)
+		}
 	}
 
 	// Sync personal mailbox display name with admin full name
@@ -722,10 +735,27 @@ func (s *AdminService) UpdateAdminProfile(ctx context.Context, actorID, fullName
 		return nil, domain.NewError("ADMIN_NOT_FOUND", "Akun admin tidak ditemukan", 404)
 	}
 
+	// Load position name
+	summary := admin.ToSummary()
+	if admin.PositionID.Valid {
+		s.loadPositionName(ctx, summary)
+	}
+
 	return map[string]interface{}{
 		"message": "Profil berhasil diperbarui",
-		"user":    admin.ToSummary(),
+		"user":    summary,
 	}, nil
+}
+
+func (s *AdminService) loadPositionName(ctx context.Context, summary *domain.AdminUserSummary) {
+	if summary.PositionID == "" {
+		return
+	}
+	var name string
+	err := s.repo.DB().GetContext(ctx, &name, `SELECT name FROM admin_positions WHERE id = $1`, summary.PositionID)
+	if err == nil {
+		summary.PositionName = name
+	}
 }
 
 func (s *AdminService) GetS3File(ctx context.Context, key string) ([]byte, string, error) {

@@ -30,8 +30,8 @@ func (r *AdminRepository) BeginTx(ctx context.Context) (*sqlx.Tx, error) {
 }
 
 const adminUserColumns = `
-	id, email, phone, full_name, password_hash, avatar_url, status, is_active,
-	last_login_at, invited_by, created_by, created_at, updated_at
+	id, email, phone, full_name, password_hash, avatar_url, position_id, linkedin_url,
+	status, is_active, last_login_at, invited_by, created_by, created_at, updated_at
 `
 
 func (r *AdminRepository) FindAdminByEmail(ctx context.Context, email string) (*domain.AdminUser, error) {
@@ -174,6 +174,19 @@ func (r *AdminRepository) ClearAdminAvatar(ctx context.Context, adminID string) 
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE admin_users SET avatar_url = NULL, updated_at = NOW() WHERE id = $1
 	`, adminID)
+	return err
+}
+
+func (r *AdminRepository) UpdateAdminLinkedinURL(ctx context.Context, adminID, linkedinURL string) error {
+	if linkedinURL == "" {
+		_, err := r.db.ExecContext(ctx, `
+			UPDATE admin_users SET linkedin_url = NULL, updated_at = NOW() WHERE id = $1
+		`, adminID)
+		return err
+	}
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE admin_users SET linkedin_url = $2, updated_at = NOW() WHERE id = $1
+	`, adminID, linkedinURL)
 	return err
 }
 
@@ -669,6 +682,7 @@ func (r *AdminRepository) ListAdmins(ctx context.Context, search string, page, p
 		FROM admin_users au
 		LEFT JOIN admin_user_roles aur ON aur.admin_user_id = au.id
 		LEFT JOIN admin_roles ar ON ar.id = aur.role_id
+		LEFT JOIN admin_positions ap ON ap.id = au.position_id
 	`
 	where, args := buildSearchWhere(search, 1, "COALESCE(au.full_name, '')", "au.email", "au.phone")
 	countQuery := `SELECT COUNT(*) FROM admin_users au ` + where
@@ -682,13 +696,17 @@ func (r *AdminRepository) ListAdmins(ctx context.Context, search string, page, p
 			au.email,
 			au.phone,
 			COALESCE(au.full_name, '') AS full_name,
+			COALESCE(au.avatar_url, '') AS avatar_url,
+			COALESCE(au.linkedin_url, '') AS linkedin_url,
+			COALESCE(au.position_id::text, '') AS position_id,
+			COALESCE(ap.name, '') AS position_name,
 			au.status,
 			au.is_active,
 			au.last_login_at,
 			au.created_at,
 			COALESCE(STRING_AGG(DISTINCT ar.name, ', '), '') AS roles
 	` + baseFrom + where + `
-		GROUP BY au.id
+		GROUP BY au.id, ap.name
 		ORDER BY au.created_at DESC
 		LIMIT $` + fmt.Sprintf("%d", len(args)+1) + ` OFFSET $` + fmt.Sprintf("%d", len(args)+2)
 	items, err := r.selectMaps(ctx, query, append(args, sanitizePageSize(perPage), calculateOffset(page, perPage))...)
@@ -702,6 +720,10 @@ func (r *AdminRepository) GetAdminDetail(ctx context.Context, adminID string) (m
 			au.email,
 			au.phone,
 			COALESCE(au.full_name, '') AS full_name,
+			COALESCE(au.avatar_url, '') AS avatar_url,
+			COALESCE(au.linkedin_url, '') AS linkedin_url,
+			COALESCE(au.position_id::text, '') AS position_id,
+			COALESCE(ap.name, '') AS position_name,
 			au.status,
 			au.is_active,
 			au.last_login_at,
@@ -713,8 +735,9 @@ func (r *AdminRepository) GetAdminDetail(ctx context.Context, adminID string) (m
 		FROM admin_users au
 		LEFT JOIN admin_user_roles aur ON aur.admin_user_id = au.id
 		LEFT JOIN admin_roles ar ON ar.id = aur.role_id
+		LEFT JOIN admin_positions ap ON ap.id = au.position_id
 		WHERE au.id = $1
-		GROUP BY au.id
+		GROUP BY au.id, ap.name
 		LIMIT 1
 	`, adminID)
 	if err != nil {

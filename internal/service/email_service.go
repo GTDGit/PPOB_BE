@@ -46,6 +46,7 @@ type MailReplyRequest struct {
 	Headers           map[string]string
 	ConfigurationSet  string
 	Tags              map[string]string
+	Attachments       []internalsmtp.EmailAttachment
 }
 
 func NewEmailService(emailCfg config.EmailConfig, brevoCfg config.BrevoConfig, adminRepo *repository.AdminRepository) (*EmailService, error) {
@@ -319,6 +320,7 @@ func (s *EmailService) SendMailboxReply(ctx context.Context, req MailReplyReques
 			CcAddresses:  req.CcAddresses,
 			BccAddresses: req.BccAddresses,
 			Headers:      req.Headers,
+			Attachments:  req.Attachments,
 		})
 	}
 
@@ -465,6 +467,7 @@ type smtpSendRequest struct {
 	CcAddresses  []string
 	BccAddresses []string
 	Headers      map[string]string
+	Attachments  []internalsmtp.EmailAttachment
 }
 
 func (s *EmailService) useSMTP() bool {
@@ -487,6 +490,7 @@ func (s *EmailService) sendViaSMTP(ctx context.Context, req smtpSendRequest) (st
 		HTMLBody:         req.HTMLBody,
 		TextBody:         req.TextBody,
 		Headers:          req.Headers,
+		Attachments:      req.Attachments,
 	})
 }
 
