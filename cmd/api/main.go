@@ -101,11 +101,12 @@ func main() {
 
 	var emailStorageClient *s3.Client
 	if cfg.Email.SES.InboundBucket != "" {
+		// Use main S3 credentials for inbound bucket (needs s3:ListBucket + s3:GetObject)
 		emailStorageClient, err = s3.NewClient(s3.Config{
 			Region:          cfg.Email.SES.Region,
 			Bucket:          cfg.Email.SES.InboundBucket,
-			AccessKeyID:     cfg.Email.SES.AccessKeyID,
-			SecretAccessKey: cfg.Email.SES.SecretAccessKey,
+			AccessKeyID:     cfg.S3.AccessKey,
+			SecretAccessKey: cfg.S3.SecretKey,
 		})
 		if err != nil {
 			log.Fatalf("Failed to initialize email storage client: %v", err)
