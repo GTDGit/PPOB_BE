@@ -158,6 +158,7 @@ type AdminUserSummary struct {
 	PositionID   string   `json:"positionId,omitempty"`
 	PositionName string   `json:"positionName,omitempty"`
 	LinkedinURL  string   `json:"linkedinUrl,omitempty"`
+	MailboxEmail string   `json:"mailboxEmail,omitempty"`
 	Status       string   `json:"status"`
 	IsActive     bool     `json:"isActive"`
 	LastLoginAt  *string  `json:"lastLoginAt,omitempty"`

@@ -1705,7 +1705,13 @@ func (s *AdminMailboxService) buildSignature(ctx context.Context, adminID string
 	}
 
 	name := admin.DisplayName()
-	email := admin.Email
+
+	// Use personal mailbox address (e.g. riko@ppob.id) instead of login email
+	var personalEmail string
+	_ = s.repo.DB().GetContext(ctx, &personalEmail, `SELECT address FROM admin_mailboxes WHERE type = 'personal' AND owner_admin_id = $1 LIMIT 1`, adminID)
+	if personalEmail == "" {
+		personalEmail = admin.Email
+	}
 
 	// Load position name
 	var positionName string
@@ -1725,7 +1731,7 @@ func (s *AdminMailboxService) buildSignature(ctx context.Context, adminID string
 	if positionName != "" {
 		sig += html.EscapeString(positionName) + `<br/>`
 	}
-	sig += `Email: ` + html.EscapeString(email) + `<br/>`
+	sig += `Email: ` + html.EscapeString(personalEmail) + `<br/>`
 	if linkedinURL != "" {
 		sig += `LinkedIn: <a href="` + html.EscapeString(linkedinURL) + `" style="color:#2563eb;">` + html.EscapeString(linkedinURL) + `</a><br/>`
 	}

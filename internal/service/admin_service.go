@@ -174,6 +174,14 @@ func (s *AdminService) GetMe(ctx context.Context, adminID string) (*domain.Admin
 	}
 	summary := admin.ToSummary()
 	s.loadPositionName(ctx, summary)
+
+	// Load personal mailbox email (e.g. riko@ppob.id)
+	var mailboxEmail string
+	_ = s.repo.DB().GetContext(ctx, &mailboxEmail, `SELECT address FROM admin_mailboxes WHERE type = 'personal' AND owner_admin_id = $1 LIMIT 1`, adminID)
+	if mailboxEmail != "" {
+		summary.MailboxEmail = mailboxEmail
+	}
+
 	return summary, admin.Permissions, nil
 }
 
