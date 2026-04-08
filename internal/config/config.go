@@ -113,6 +113,15 @@ type EmailConfig struct {
 	ReplyToEmail     string
 	MailboxDomain    string
 	SES              SESConfig
+	SMTP             SMTPConfig
+}
+
+type SMTPConfig struct {
+	Host     string
+	Port     int
+	Username string
+	Password string
+	UseTLS   bool
 }
 
 type SESConfig struct {
@@ -280,6 +289,13 @@ func Load() (*Config, error) {
 				InboundBucket:                 getEnv("SES_INBOUND_BUCKET", getEnv("S3_BUCKET", "")),
 				InboundTopicARN:               getEnv("SES_INBOUND_TOPIC_ARN", ""),
 				DeliveryTopicARN:              getEnv("SES_DELIVERY_TOPIC_ARN", ""),
+			},
+			SMTP: SMTPConfig{
+				Host:     getEnv("SMTP_HOST", ""),
+				Port:     getEnvAsInt("SMTP_PORT", 465),
+				Username: getEnv("SMTP_USERNAME", ""),
+				Password: getEnv("SMTP_PASSWORD", ""),
+				UseTLS:   getEnv("SMTP_USE_TLS", "true") == "true",
 			},
 		},
 		Brevo: BrevoConfig{

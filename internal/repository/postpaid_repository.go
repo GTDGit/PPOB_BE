@@ -3,9 +3,10 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"fmt"
 
-	"github.com/jmoiron/sqlx"
 	"github.com/GTDGit/PPOB_BE/internal/domain"
+	"github.com/jmoiron/sqlx"
 )
 
 // PostpaidRepository handles postpaid data access
@@ -15,6 +16,7 @@ type PostpaidRepository interface {
 	FindInquiryByUserAndID(ctx context.Context, userID, id string) (*domain.PostpaidInquiry, error)
 
 	CreateTransaction(ctx context.Context, tx *domain.PostpaidTransaction) error
+	CreateTransactionWithTx(ctx context.Context, dbtx *sqlx.Tx, tx *domain.PostpaidTransaction) error
 	FindTransactionByID(ctx context.Context, id string) (*domain.PostpaidTransaction, error)
 	FindTransactionByInquiryID(ctx context.Context, inquiryID string) (*domain.PostpaidTransaction, error)
 	UpdateTransactionStatus(ctx context.Context, id, status string) error
@@ -32,7 +34,7 @@ const postpaidInquiryColumns = `id, user_id, service_type, target, provider_id, 
 	customer_name, period, bill_amount, admin_fee, penalty, total_payment, has_bill,
 	external_id, expires_at, created_at`
 
-const postpaidTransactionColumns = `id, user_id, inquiry_id, service_type, target, provider_id,
+const postpaidTransactionColumns = `id, public_id, user_id, inquiry_id, service_type, target, provider_id,
 	customer_id, customer_name, period, bill_amount, admin_fee, penalty, voucher_discount,
 	total_payment, balance_before, balance_after, reference_number, serial_number, external_id,
 	status, failed_reason, completed_at, created_at, updated_at`
@@ -89,26 +91,56 @@ func (r *postpaidRepository) FindInquiryByUserAndID(ctx context.Context, userID,
 
 // CreateTransaction creates a new transaction
 func (r *postpaidRepository) CreateTransaction(ctx context.Context, tx *domain.PostpaidTransaction) error {
+	return r.createTransaction(ctx, r.db, tx)
+}
+
+func (r *postpaidRepository) CreateTransactionWithTx(ctx context.Context, dbtx *sqlx.Tx, tx *domain.PostpaidTransaction) error {
+	return r.createTransaction(ctx, dbtx, tx)
+}
+
+func (r *postpaidRepository) createTransaction(ctx context.Context, exec sqlx.ExtContext, tx *domain.PostpaidTransaction) error {
+	if tx.ID == "" {
+		tx.ID = NewUUID()
+	}
+	if tx.PublicID == nil || *tx.PublicID == "" {
+		var (
+			publicID string
+			err      error
+		)
+		switch typedExec := exec.(type) {
+		case *sqlx.DB:
+			publicID, err = GeneratePublicTransactionID(ctx, typedExec)
+		case *sqlx.Tx:
+			publicID, err = GeneratePublicTransactionID(ctx, typedExec)
+		default:
+			err = fmt.Errorf("unsupported postpaid transaction executor")
+		}
+		if err != nil {
+			return err
+		}
+		tx.PublicID = &publicID
+	}
+
 	query := `
 		INSERT INTO postpaid_transactions (
-			id, user_id, inquiry_id, service_type, target, provider_id, customer_id,
+			id, public_id, user_id, inquiry_id, service_type, target, provider_id, customer_id,
 			customer_name, period, bill_amount, admin_fee, penalty, voucher_discount,
 			total_payment, balance_before, balance_after, reference_number, serial_number,
 			external_id, status, failed_reason, completed_at, created_at, updated_at
 		) VALUES (
-			:id, :user_id, :inquiry_id, :service_type, :target, :provider_id, :customer_id,
+			:id, :public_id, :user_id, :inquiry_id, :service_type, :target, :provider_id, :customer_id,
 			:customer_name, :period, :bill_amount, :admin_fee, :penalty, :voucher_discount,
 			:total_payment, :balance_before, :balance_after, :reference_number, :serial_number,
 			:external_id, :status, :failed_reason, :completed_at, :created_at, :updated_at
 		)
 	`
-	_, err := r.db.NamedExecContext(ctx, query, tx)
+	_, err := sqlx.NamedExecContext(ctx, exec, query, tx)
 	return err
 }
 
 // FindTransactionByID finds transaction by ID
 func (r *postpaidRepository) FindTransactionByID(ctx context.Context, id string) (*domain.PostpaidTransaction, error) {
-	query := `SELECT ` + postpaidTransactionColumns + ` FROM postpaid_transactions WHERE id = $1 LIMIT 1`
+	query := `SELECT ` + postpaidTransactionColumns + ` FROM postpaid_transactions WHERE id = $1 OR public_id = $1 ORDER BY CASE WHEN id = $1 THEN 0 ELSE 1 END LIMIT 1`
 
 	var tx domain.PostpaidTransaction
 	if err := r.db.GetContext(ctx, &tx, query, id); err != nil {

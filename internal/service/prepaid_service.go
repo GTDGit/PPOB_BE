@@ -13,13 +13,13 @@ import (
 	"github.com/GTDGit/PPOB_BE/internal/external/gerbang"
 	"github.com/GTDGit/PPOB_BE/internal/repository"
 	"github.com/GTDGit/PPOB_BE/pkg/hash"
-	"github.com/google/uuid"
 )
 
 // PrepaidService handles prepaid transaction business logic
 type PrepaidService struct {
 	prepaidRepo   repository.PrepaidRepository
 	balanceRepo   repository.BalanceRepository
+	refundRepo    repository.RefundRepository
 	userRepo      repository.UserRepository
 	productRepo   repository.ProductRepository
 	gerbangClient *gerbang.Client
@@ -30,6 +30,7 @@ type PrepaidService struct {
 func NewPrepaidService(
 	prepaidRepo repository.PrepaidRepository,
 	balanceRepo repository.BalanceRepository,
+	refundRepo repository.RefundRepository,
 	userRepo repository.UserRepository,
 	productRepo repository.ProductRepository,
 	gerbangClient *gerbang.Client,
@@ -38,6 +39,7 @@ func NewPrepaidService(
 	return &PrepaidService{
 		prepaidRepo:   prepaidRepo,
 		balanceRepo:   balanceRepo,
+		refundRepo:    refundRepo,
 		userRepo:      userRepo,
 		productRepo:   productRepo,
 		gerbangClient: gerbangClient,
@@ -80,7 +82,7 @@ func (s *PrepaidService) Inquiry(ctx context.Context, req InquiryRequest) (*doma
 	targetValid := true
 
 	// Create inquiry record
-	inquiryID := "inq_" + uuid.New().String()[:8]
+	inquiryID := repository.NewUUID()
 	inquiry := &domain.PrepaidInquiry{
 		ID:          inquiryID,
 		UserID:      req.UserID,
@@ -186,7 +188,7 @@ func (s *PrepaidService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	pinRequired := false
 
 	// Create order
-	orderID := "ord_" + uuid.New().String()[:8]
+	orderID := repository.NewUUID()
 	order := &domain.PrepaidOrder{
 		ID:            orderID,
 		UserID:        req.UserID,
@@ -212,7 +214,7 @@ func (s *PrepaidService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	// Build response
 	response := &domain.PrepaidOrderResponse{
 		Order: &domain.OrderInfo{
-			OrderID:     orderID,
+			OrderID:     repository.DisplayID(order.PublicID, order.ID),
 			Status:      domain.OrderPendingPayment,
 			ServiceType: inquiry.ServiceType,
 			CreatedAt:   order.CreatedAt.Format(time.RFC3339),
@@ -297,7 +299,7 @@ func (s *PrepaidService) Pay(ctx context.Context, req PayRequest) (*domain.Prepa
 	}
 
 	// Check for existing transaction (idempotency)
-	existingTx, err := s.prepaidRepo.FindTransactionByOrderID(ctx, req.OrderID)
+	existingTx, err := s.prepaidRepo.FindTransactionByOrderID(ctx, order.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check existing transaction: %w", err)
 	}
@@ -329,7 +331,7 @@ func (s *PrepaidService) Pay(ctx context.Context, req PayRequest) (*domain.Prepa
 	var balanceBefore, balanceAfter int64
 	var serialNumber, referenceNumber string
 	var token, kwh *string
-	transactionID := "trx_" + uuid.New().String()[:8]
+	transactionID := repository.NewUUID()
 
 	// Begin transaction
 	tx, err := s.prepaidRepo.BeginTx(ctx)
@@ -457,7 +459,7 @@ func (s *PrepaidService) Pay(ctx context.Context, req PayRequest) (*domain.Prepa
 	transaction := &domain.PrepaidTransaction{
 		ID:              transactionID,
 		UserID:          req.UserID,
-		OrderID:         req.OrderID,
+		OrderID:         order.ID,
 		Status:          transactionStatus,
 		ServiceType:     order.ServiceType,
 		Target:          order.Target,
@@ -479,7 +481,7 @@ func (s *PrepaidService) Pay(ctx context.Context, req PayRequest) (*domain.Prepa
 	}
 
 	// Update order status within transaction
-	if err := s.prepaidRepo.UpdateOrderStatusWithTx(ctx, tx, req.OrderID, orderStatus); err != nil {
+	if err := s.prepaidRepo.UpdateOrderStatusWithTx(ctx, tx, order.ID, orderStatus); err != nil {
 		return nil, fmt.Errorf("failed to update order status: %w", err)
 	}
 
@@ -497,8 +499,8 @@ func (s *PrepaidService) Pay(ctx context.Context, req PayRequest) (*domain.Prepa
 	}
 	response := &domain.PrepaidPayResponse{
 		Transaction: &domain.TransactionInfo{
-			TransactionID: transactionID,
-			OrderID:       req.OrderID,
+			TransactionID: repository.DisplayID(transaction.PublicID, transaction.ID),
+			OrderID:       repository.DisplayID(order.PublicID, order.ID),
 			Status:        transactionStatus,
 			ServiceType:   order.ServiceType,
 			CompletedAt:   completedAtStr,
@@ -877,8 +879,32 @@ func getPrepaidStatusSubtitle(serviceType, status string, amount int64) string {
 	return fmt.Sprintf("Pembayaran %s sudah diterima dan sedang diproses", formatCurrency(amount))
 }
 
+func transactionWebhookFailureReason(webhookData *gerbang.TransactionWebhookData) *string {
+	if webhookData == nil {
+		return nil
+	}
+
+	status := strings.TrimSpace(webhookData.Status)
+	if status == "" {
+		return nil
+	}
+
+	reason := fmt.Sprintf("Provider mengembalikan status %s", strings.ToLower(status))
+	return &reason
+}
+
 // Refund restores balance for failed/cancelled transaction
 func (s *PrepaidService) Refund(ctx context.Context, transactionID, reason string) error {
+	if s.refundRepo != nil {
+		existingRefund, err := s.refundRepo.FindBySourceTransactionID(ctx, transactionID)
+		if err != nil {
+			return fmt.Errorf("failed to check existing refund: %w", err)
+		}
+		if existingRefund != nil {
+			return nil
+		}
+	}
+
 	// Begin transaction
 	tx, err := s.prepaidRepo.BeginTx(ctx)
 	if err != nil {
@@ -919,8 +945,31 @@ func (s *PrepaidService) Refund(ctx context.Context, transactionID, reason strin
 	// Update transaction status to refunded
 	transaction.Status = domain.TransactionRefunded
 	transaction.UpdatedAt = time.Now()
-	if err := s.prepaidRepo.UpdateTransactionStatus(ctx, transactionID, domain.TransactionRefunded); err != nil {
+	if err := s.prepaidRepo.UpdateTransactionStatusWithTx(ctx, tx, transactionID, domain.TransactionRefunded); err != nil {
 		return fmt.Errorf("failed to update transaction status: %w", err)
+	}
+
+	if s.refundRepo != nil {
+		now := time.Now()
+		var reasonPtr *string
+		if reason != "" {
+			reasonCopy := reason
+			reasonPtr = &reasonCopy
+		}
+		refund := &domain.Refund{
+			SourceTransactionID: transaction.ID,
+			SourceType:          domain.TransactionTypePrepaid,
+			UserID:              transaction.UserID,
+			Amount:              transaction.TotalPayment,
+			Reason:              reasonPtr,
+			Status:              domain.RefundStatusSuccess,
+			RefundedAt:          &now,
+			CreatedAt:           now,
+			UpdatedAt:           now,
+		}
+		if err := s.refundRepo.CreateWithTx(ctx, tx, refund); err != nil {
+			return fmt.Errorf("failed to create refund record: %w", err)
+		}
 	}
 
 	// TODO: Create balance history record when balance_history table is ready
@@ -1004,6 +1053,18 @@ func (s *PrepaidService) HandleWebhook(ctx context.Context, webhookData *gerbang
 
 	// If transaction failed, refund balance to user
 	if refundNeeded {
+		if s.refundRepo != nil {
+			existingRefund, err := s.refundRepo.FindBySourceTransactionID(ctx, transaction.ID)
+			if err != nil {
+				return fmt.Errorf("failed to check existing refund: %w", err)
+			}
+			if existingRefund != nil {
+				refundNeeded = false
+			}
+		}
+	}
+
+	if refundNeeded {
 		// Lock and get user balance
 		balance, err := s.balanceRepo.FindByUserIDForUpdate(ctx, tx, order.UserID)
 		if err != nil {
@@ -1019,6 +1080,23 @@ func (s *PrepaidService) HandleWebhook(ctx context.Context, webhookData *gerbang
 
 		if err := s.balanceRepo.UpdateWithTx(ctx, tx, balance); err != nil {
 			return fmt.Errorf("failed to restore balance: %w", err)
+		}
+
+		if s.refundRepo != nil {
+			refund := &domain.Refund{
+				SourceTransactionID: transaction.ID,
+				SourceType:          domain.TransactionTypePrepaid,
+				UserID:              transaction.UserID,
+				Amount:              transaction.TotalPayment,
+				Reason:              transactionWebhookFailureReason(webhookData),
+				Status:              domain.RefundStatusSuccess,
+				RefundedAt:          &now,
+				CreatedAt:           now,
+				UpdatedAt:           now,
+			}
+			if err := s.refundRepo.CreateWithTx(ctx, tx, refund); err != nil {
+				return fmt.Errorf("failed to create refund record: %w", err)
+			}
 		}
 
 		// TODO: Create balance history record (refund)

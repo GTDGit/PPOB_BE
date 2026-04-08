@@ -770,7 +770,7 @@ func (r *AdminRepository) ListTransactions(ctx context.Context, search, status s
 			LOWER(u.phone) LIKE $%d OR
 			LOWER(COALESCE(t.product_name, '')) LIKE $%d OR
 			LOWER(t.target) LIKE $%d OR
-			LOWER(t.id) LIKE $%d
+			LOWER(COALESCE(t.public_id, t.id)) LIKE $%d
 		)`, argIdx, argIdx, argIdx, argIdx, argIdx))
 		args = append(args, "%"+strings.ToLower(strings.TrimSpace(search))+"%")
 		argIdx++
@@ -787,7 +787,8 @@ func (r *AdminRepository) ListTransactions(ctx context.Context, search, status s
 	}
 	query := `
 		SELECT
-			t.id,
+			COALESCE(t.public_id, t.id) AS id,
+			t.id AS internal_id,
 			t.type,
 			t.service_type,
 			t.target,
@@ -813,7 +814,8 @@ func (r *AdminRepository) ListTransactions(ctx context.Context, search, status s
 func (r *AdminRepository) GetTransactionDetail(ctx context.Context, transactionID string) (map[string]interface{}, error) {
 	items, err := r.selectMaps(ctx, `
 		SELECT
-			t.id,
+			COALESCE(t.public_id, t.id) AS id,
+			t.id AS internal_id,
 			t.user_id,
 			t.type,
 			t.service_type,
@@ -834,7 +836,8 @@ func (r *AdminRepository) GetTransactionDetail(ctx context.Context, transactionI
 			COALESCE(u.email::text, '') AS user_email
 		FROM transactions t
 		INNER JOIN users u ON u.id = t.user_id
-		WHERE t.id = $1
+		WHERE t.id = $1 OR t.public_id = $1
+		ORDER BY CASE WHEN t.id = $1 THEN 0 ELSE 1 END
 		LIMIT 1
 	`, transactionID)
 	if err != nil {
@@ -858,7 +861,7 @@ func (r *AdminRepository) ListDeposits(ctx context.Context, search, status strin
 		whereClauses = append(whereClauses, fmt.Sprintf(`(
 			LOWER(COALESCE(u.full_name, '')) LIKE $%d OR
 			LOWER(u.phone) LIKE $%d OR
-			LOWER(d.id) LIKE $%d OR
+			LOWER(COALESCE(d.public_id, d.id)) LIKE $%d OR
 			LOWER(COALESCE(d.reference_number, '')) LIKE $%d
 		)`, argIdx, argIdx, argIdx, argIdx))
 		args = append(args, "%"+strings.ToLower(strings.TrimSpace(search))+"%")
@@ -876,7 +879,8 @@ func (r *AdminRepository) ListDeposits(ctx context.Context, search, status strin
 	}
 	query := `
 		SELECT
-			d.id,
+			COALESCE(d.public_id, d.id) AS id,
+			d.id AS internal_id,
 			d.user_id,
 			d.method,
 			d.amount,
@@ -900,7 +904,8 @@ func (r *AdminRepository) ListDeposits(ctx context.Context, search, status strin
 func (r *AdminRepository) GetDepositDetail(ctx context.Context, depositID string) (map[string]interface{}, error) {
 	items, err := r.selectMaps(ctx, `
 		SELECT
-			d.id,
+			COALESCE(d.public_id, d.id) AS id,
+			d.id AS internal_id,
 			d.user_id,
 			d.method,
 			d.amount,
@@ -918,7 +923,8 @@ func (r *AdminRepository) GetDepositDetail(ctx context.Context, depositID string
 			COALESCE(u.email::text, '') AS user_email
 		FROM deposits d
 		INNER JOIN users u ON u.id = d.user_id
-		WHERE d.id = $1
+		WHERE d.id = $1 OR d.public_id = $1
+		ORDER BY CASE WHEN d.id = $1 THEN 0 ELSE 1 END
 		LIMIT 1
 	`, depositID)
 	if err != nil {
@@ -932,8 +938,11 @@ func (r *AdminRepository) GetDepositDetail(ctx context.Context, depositID string
 
 func (r *AdminRepository) FindDepositRow(ctx context.Context, depositID string) (map[string]interface{}, error) {
 	items, err := r.selectMaps(ctx, `
-		SELECT id, user_id, total_amount, status, method, reference_number, external_id
-		FROM deposits WHERE id = $1 LIMIT 1
+		SELECT COALESCE(public_id, id) AS id, id AS internal_id, user_id, total_amount, status, method, reference_number, external_id
+		FROM deposits
+		WHERE id = $1 OR public_id = $1
+		ORDER BY CASE WHEN id = $1 THEN 0 ELSE 1 END
+		LIMIT 1
 	`, depositID)
 	if err != nil {
 		return nil, err
@@ -949,14 +958,15 @@ func (r *AdminRepository) ListQrisIncomes(ctx context.Context, search string, pa
 		FROM qris_incomes qi
 		INNER JOIN users u ON u.id = qi.user_id
 	`
-	where, args := buildSearchWhere(search, 1, "COALESCE(qi.merchant_name, '')", "COALESCE(qi.payer_name, '')", "u.phone", "qi.id")
+	where, args := buildSearchWhere(search, 1, "COALESCE(qi.merchant_name, '')", "COALESCE(qi.payer_name, '')", "u.phone", "COALESCE(qi.public_id, qi.id)")
 	total, err := r.count(ctx, `SELECT COUNT(*) `+base+where, args...)
 	if err != nil {
 		return nil, 0, err
 	}
 	query := `
 		SELECT
-			qi.id,
+			COALESCE(qi.public_id, qi.id) AS id,
+			qi.id AS internal_id,
 			qi.user_id,
 			qi.merchant_name,
 			qi.payer_name,
@@ -981,7 +991,8 @@ func (r *AdminRepository) ListQrisIncomes(ctx context.Context, search string, pa
 func (r *AdminRepository) GetQrisIncomeDetail(ctx context.Context, qrisID string) (map[string]interface{}, error) {
 	items, err := r.selectMaps(ctx, `
 		SELECT
-			qi.id,
+			COALESCE(qi.public_id, qi.id) AS id,
+			qi.id AS internal_id,
 			qi.user_id,
 			COALESCE(qi.merchant_name, '') AS merchant_name,
 			COALESCE(qi.payer_name, '') AS payer_name,
@@ -999,7 +1010,8 @@ func (r *AdminRepository) GetQrisIncomeDetail(ctx context.Context, qrisID string
 			COALESCE(u.email::text, '') AS user_email
 		FROM qris_incomes qi
 		INNER JOIN users u ON u.id = qi.user_id
-		WHERE qi.id = $1
+		WHERE qi.id = $1 OR qi.public_id = $1
+		ORDER BY CASE WHEN qi.id = $1 THEN 0 ELSE 1 END
 		LIMIT 1
 	`, qrisID)
 	if err != nil {

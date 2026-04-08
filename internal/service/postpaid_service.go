@@ -10,13 +10,13 @@ import (
 	"github.com/GTDGit/PPOB_BE/internal/domain"
 	"github.com/GTDGit/PPOB_BE/internal/external/gerbang"
 	"github.com/GTDGit/PPOB_BE/internal/repository"
-	"github.com/google/uuid"
 )
 
 // PostpaidService handles postpaid business logic
 type PostpaidService struct {
 	postpaidRepo  repository.PostpaidRepository
 	balanceRepo   repository.BalanceRepository
+	refundRepo    repository.RefundRepository
 	voucherRepo   repository.VoucherRepository
 	userRepo      repository.UserRepository
 	productRepo   repository.ProductRepository
@@ -28,6 +28,7 @@ type PostpaidService struct {
 func NewPostpaidService(
 	postpaidRepo repository.PostpaidRepository,
 	balanceRepo repository.BalanceRepository,
+	refundRepo repository.RefundRepository,
 	voucherRepo repository.VoucherRepository,
 	userRepo repository.UserRepository,
 	productRepo repository.ProductRepository,
@@ -37,6 +38,7 @@ func NewPostpaidService(
 	return &PostpaidService{
 		postpaidRepo:  postpaidRepo,
 		balanceRepo:   balanceRepo,
+		refundRepo:    refundRepo,
 		voucherRepo:   voucherRepo,
 		userRepo:      userRepo,
 		productRepo:   productRepo,
@@ -58,7 +60,7 @@ func (s *PostpaidService) Inquiry(ctx context.Context, userID, serviceType, targ
 	}
 
 	// Call Gerbang API for inquiry
-	inquiryID := fmt.Sprintf("inq_post_%s", uuid.New().String()[:12])
+	inquiryID := repository.NewUUID()
 	product, err := s.findPostpaidProduct(ctx, serviceType)
 	if err != nil {
 		return nil, err
@@ -318,7 +320,7 @@ func (s *PostpaidService) Pay(ctx context.Context, userID, inquiryID string, vou
 	}
 
 	// Call Gerbang API to pay bill
-	transactionID := fmt.Sprintf("trx_post_%s", uuid.New().String()[:12])
+	transactionID := repository.NewUUID()
 	product, err := s.findPostpaidProduct(ctx, inquiry.ServiceType)
 	if err != nil {
 		return nil, err
@@ -422,8 +424,8 @@ func (s *PostpaidService) Pay(ctx context.Context, userID, inquiryID string, vou
 		transaction.ExternalID = &externalID
 	}
 
-	// Save transaction
-	if err := s.postpaidRepo.CreateTransaction(ctx, transaction); err != nil {
+	// Save transaction inside the same DB transaction as balance deduction.
+	if err := s.postpaidRepo.CreateTransactionWithTx(ctx, tx, transaction); err != nil {
 		return nil, fmt.Errorf("failed to create transaction: %w", err)
 	}
 
@@ -445,7 +447,7 @@ func (s *PostpaidService) buildPayResponse(tx *domain.PostpaidTransaction) *doma
 
 	return &domain.PostpaidPayResponse{
 		Transaction: &domain.PostpaidTransactionInfo{
-			TransactionID: tx.ID,
+			TransactionID: repository.DisplayID(tx.PublicID, tx.ID),
 			InquiryID:     tx.InquiryID,
 			Status:        tx.Status,
 			ServiceType:   tx.ServiceType,
@@ -682,6 +684,16 @@ func getPostpaidStatusSubtitle(serviceType, status, period string) string {
 
 // Refund restores balance for failed/cancelled transaction
 func (s *PostpaidService) Refund(ctx context.Context, transactionID, reason string) error {
+	if s.refundRepo != nil {
+		existingRefund, err := s.refundRepo.FindBySourceTransactionID(ctx, transactionID)
+		if err != nil {
+			return fmt.Errorf("failed to check existing refund: %w", err)
+		}
+		if existingRefund != nil {
+			return nil
+		}
+	}
+
 	// Begin transaction
 	tx, err := s.postpaidRepo.BeginTx(ctx)
 	if err != nil {
@@ -722,8 +734,31 @@ func (s *PostpaidService) Refund(ctx context.Context, transactionID, reason stri
 	// Update transaction status to refunded
 	transaction.Status = domain.TransactionRefunded
 	transaction.UpdatedAt = time.Now()
-	if err := s.postpaidRepo.UpdateTransactionStatus(ctx, transactionID, domain.TransactionRefunded); err != nil {
+	if err := s.postpaidRepo.UpdateTransactionStatusWithTx(ctx, tx, transactionID, domain.TransactionRefunded); err != nil {
 		return fmt.Errorf("failed to update transaction status: %w", err)
+	}
+
+	if s.refundRepo != nil {
+		now := time.Now()
+		var reasonPtr *string
+		if reason != "" {
+			reasonCopy := reason
+			reasonPtr = &reasonCopy
+		}
+		refund := &domain.Refund{
+			SourceTransactionID: transaction.ID,
+			SourceType:          domain.TransactionTypePostpaid,
+			UserID:              transaction.UserID,
+			Amount:              transaction.TotalPayment,
+			Reason:              reasonPtr,
+			Status:              domain.RefundStatusSuccess,
+			RefundedAt:          &now,
+			CreatedAt:           now,
+			UpdatedAt:           now,
+		}
+		if err := s.refundRepo.CreateWithTx(ctx, tx, refund); err != nil {
+			return fmt.Errorf("failed to create refund record: %w", err)
+		}
 	}
 
 	// TODO: Create balance history record when balance_history table is ready
@@ -771,6 +806,18 @@ func (s *PostpaidService) HandleWebhook(ctx context.Context, webhookData *gerban
 	}
 
 	if refundNeeded {
+		if s.refundRepo != nil {
+			existingRefund, err := s.refundRepo.FindBySourceTransactionID(ctx, transaction.ID)
+			if err != nil {
+				return fmt.Errorf("failed to check existing refund: %w", err)
+			}
+			if existingRefund != nil {
+				refundNeeded = false
+			}
+		}
+	}
+
+	if refundNeeded {
 		balance, err := s.balanceRepo.FindByUserIDForUpdate(ctx, tx, transaction.UserID)
 		if err != nil {
 			return fmt.Errorf("failed to get balance: %w", err)
@@ -783,6 +830,23 @@ func (s *PostpaidService) HandleWebhook(ctx context.Context, webhookData *gerban
 		balance.UpdatedAt = now
 		if err := s.balanceRepo.UpdateWithTx(ctx, tx, balance); err != nil {
 			return fmt.Errorf("failed to restore balance: %w", err)
+		}
+
+		if s.refundRepo != nil {
+			refund := &domain.Refund{
+				SourceTransactionID: transaction.ID,
+				SourceType:          domain.TransactionTypePostpaid,
+				UserID:              transaction.UserID,
+				Amount:              transaction.TotalPayment,
+				Reason:              transactionWebhookFailureReason(webhookData),
+				Status:              domain.RefundStatusSuccess,
+				RefundedAt:          &now,
+				CreatedAt:           now,
+				UpdatedAt:           now,
+			}
+			if err := s.refundRepo.CreateWithTx(ctx, tx, refund); err != nil {
+				return fmt.Errorf("failed to create refund record: %w", err)
+			}
 		}
 	}
 

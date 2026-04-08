@@ -22,6 +22,7 @@ type TransferInquiry struct {
 // TransferTransaction represents transfer transaction
 type TransferTransaction struct {
 	ID                string     `db:"id" json:"id"`
+	PublicID          *string    `db:"public_id" json:"publicId,omitempty"`
 	UserID            string     `db:"user_id" json:"userId"`
 	InquiryID         string     `db:"inquiry_id" json:"inquiryId"`
 	Status            string     `db:"status" json:"status"`

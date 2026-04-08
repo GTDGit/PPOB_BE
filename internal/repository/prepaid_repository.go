@@ -48,11 +48,11 @@ func NewPrepaidRepository(db *sqlx.DB) PrepaidRepository {
 const prepaidInquiryColumns = `id, user_id, service_type, target, target_valid,
 	operator_id, customer_id, customer_name, expires_at, created_at`
 
-const prepaidOrderColumns = `id, user_id, inquiry_id, product_id, status, service_type,
+const prepaidOrderColumns = `id, public_id, user_id, inquiry_id, product_id, status, service_type,
 	target, product_price, admin_fee, subtotal, total_discount, total_payment,
 	expires_at, created_at, updated_at`
 
-const prepaidTransactionColumns = `id, user_id, order_id, status, service_type, target,
+const prepaidTransactionColumns = `id, public_id, user_id, order_id, status, service_type, target,
 	product_id, total_payment, balance_before, balance_after, serial_number,
 	reference_number, token, kwh, completed_at, created_at, updated_at`
 
@@ -93,13 +93,24 @@ func (r *prepaidRepository) FindInquiryByID(ctx context.Context, id string) (*do
 
 // CreateOrder creates a new order record
 func (r *prepaidRepository) CreateOrder(ctx context.Context, order *domain.PrepaidOrder) error {
+	if order.ID == "" {
+		order.ID = NewUUID()
+	}
+	if order.PublicID == nil || *order.PublicID == "" {
+		publicID, err := GeneratePublicOrderID(ctx, r.db)
+		if err != nil {
+			return err
+		}
+		order.PublicID = &publicID
+	}
+
 	query := `
 		INSERT INTO prepaid_orders (
-			id, user_id, inquiry_id, product_id, status, service_type, target,
+			id, public_id, user_id, inquiry_id, product_id, status, service_type, target,
 			product_price, admin_fee, subtotal, total_discount, total_payment,
 			expires_at, created_at, updated_at
 		) VALUES (
-			:id, :user_id, :inquiry_id, :product_id, :status, :service_type, :target,
+			:id, :public_id, :user_id, :inquiry_id, :product_id, :status, :service_type, :target,
 			:product_price, :admin_fee, :subtotal, :total_discount, :total_payment,
 			:expires_at, :created_at, :updated_at
 		)
@@ -111,7 +122,7 @@ func (r *prepaidRepository) CreateOrder(ctx context.Context, order *domain.Prepa
 // FindOrderByID finds an order by ID
 func (r *prepaidRepository) FindOrderByID(ctx context.Context, id string) (*domain.PrepaidOrder, error) {
 	var order domain.PrepaidOrder
-	query := fmt.Sprintf(`SELECT %s FROM prepaid_orders WHERE id = $1`, prepaidOrderColumns)
+	query := fmt.Sprintf(`SELECT %s FROM prepaid_orders WHERE id = $1 OR public_id = $1 ORDER BY CASE WHEN id = $1 THEN 0 ELSE 1 END LIMIT 1`, prepaidOrderColumns)
 	err := r.db.GetContext(ctx, &order, query, id)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -122,7 +133,7 @@ func (r *prepaidRepository) FindOrderByID(ctx context.Context, id string) (*doma
 // FindOrderByUserAndID finds an order by user ID and order ID (with ownership validation)
 func (r *prepaidRepository) FindOrderByUserAndID(ctx context.Context, userID, orderID string) (*domain.PrepaidOrder, error) {
 	var order domain.PrepaidOrder
-	query := fmt.Sprintf(`SELECT %s FROM prepaid_orders WHERE id = $1 AND user_id = $2`, prepaidOrderColumns)
+	query := fmt.Sprintf(`SELECT %s FROM prepaid_orders WHERE (id = $1 OR public_id = $1) AND user_id = $2 ORDER BY CASE WHEN id = $1 THEN 0 ELSE 1 END LIMIT 1`, prepaidOrderColumns)
 	err := r.db.GetContext(ctx, &order, query, orderID, userID)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -146,14 +157,25 @@ func (r *prepaidRepository) UpdateOrderStatusWithTx(ctx context.Context, tx *sql
 
 // CreateTransaction creates a new transaction record
 func (r *prepaidRepository) CreateTransaction(ctx context.Context, tx *domain.PrepaidTransaction) error {
+	if tx.ID == "" {
+		tx.ID = NewUUID()
+	}
+	if tx.PublicID == nil || *tx.PublicID == "" {
+		publicID, err := GeneratePublicTransactionID(ctx, r.db)
+		if err != nil {
+			return err
+		}
+		tx.PublicID = &publicID
+	}
+
 	query := `
 		INSERT INTO prepaid_transactions (
-			id, user_id, order_id, status, service_type, target, product_id,
+			id, public_id, user_id, order_id, status, service_type, target, product_id,
 			total_payment, balance_before, balance_after,
 			serial_number, reference_number, token, kwh,
 			completed_at, created_at, updated_at
 		) VALUES (
-			:id, :user_id, :order_id, :status, :service_type, :target, :product_id,
+			:id, :public_id, :user_id, :order_id, :status, :service_type, :target, :product_id,
 			:total_payment, :balance_before, :balance_after,
 			:serial_number, :reference_number, :token, :kwh,
 			:completed_at, :created_at, :updated_at
@@ -165,14 +187,25 @@ func (r *prepaidRepository) CreateTransaction(ctx context.Context, tx *domain.Pr
 
 // CreateTransactionWithTx creates a new transaction record within a database transaction
 func (r *prepaidRepository) CreateTransactionWithTx(ctx context.Context, dbtx *sqlx.Tx, tx *domain.PrepaidTransaction) error {
+	if tx.ID == "" {
+		tx.ID = NewUUID()
+	}
+	if tx.PublicID == nil || *tx.PublicID == "" {
+		publicID, err := GeneratePublicTransactionID(ctx, dbtx)
+		if err != nil {
+			return err
+		}
+		tx.PublicID = &publicID
+	}
+
 	query := `
 		INSERT INTO prepaid_transactions (
-			id, user_id, order_id, status, service_type, target, product_id,
+			id, public_id, user_id, order_id, status, service_type, target, product_id,
 			total_payment, balance_before, balance_after,
 			serial_number, reference_number, token, kwh,
 			completed_at, created_at, updated_at
 		) VALUES (
-			:id, :user_id, :order_id, :status, :service_type, :target, :product_id,
+			:id, :public_id, :user_id, :order_id, :status, :service_type, :target, :product_id,
 			:total_payment, :balance_before, :balance_after,
 			:serial_number, :reference_number, :token, :kwh,
 			:completed_at, :created_at, :updated_at
@@ -185,7 +218,7 @@ func (r *prepaidRepository) CreateTransactionWithTx(ctx context.Context, dbtx *s
 // FindTransactionByID finds a transaction by ID
 func (r *prepaidRepository) FindTransactionByID(ctx context.Context, id string) (*domain.PrepaidTransaction, error) {
 	var tx domain.PrepaidTransaction
-	query := fmt.Sprintf(`SELECT %s FROM prepaid_transactions WHERE id = $1`, prepaidTransactionColumns)
+	query := fmt.Sprintf(`SELECT %s FROM prepaid_transactions WHERE id = $1 OR public_id = $1 ORDER BY CASE WHEN id = $1 THEN 0 ELSE 1 END LIMIT 1`, prepaidTransactionColumns)
 	err := r.db.GetContext(ctx, &tx, query, id)
 	if err == sql.ErrNoRows {
 		return nil, nil

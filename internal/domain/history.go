@@ -5,6 +5,7 @@ import "time"
 // Transaction represents a unified transaction record
 type Transaction struct {
 	ID            string     `db:"id" json:"id"`
+	PublicID      *string    `db:"public_id" json:"publicId,omitempty"`
 	UserID        string     `db:"user_id" json:"userId"`
 	OrderID       *string    `db:"order_id" json:"orderId"`
 	InquiryID     *string    `db:"inquiry_id" json:"inquiryId"`

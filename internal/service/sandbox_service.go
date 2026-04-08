@@ -79,7 +79,7 @@ func (s *SandboxService) Checkout(ctx context.Context, req SandboxCheckoutReques
 	}
 
 	now := time.Now()
-	transactionID := "trx_sb_" + uuid.New().String()[:8]
+	transactionID := repository.NewUUID()
 	referenceNumber := "SBX" + strings.ToUpper(uuid.New().String()[:10])
 	transaction := &domain.Transaction{
 		ID:           transactionID,
@@ -108,6 +108,8 @@ func (s *SandboxService) Checkout(ctx context.Context, req SandboxCheckoutReques
 		return nil, fmt.Errorf("failed to create sandbox transaction: %w", err)
 	}
 
+	displayTransactionID := repository.DisplayID(transaction.PublicID, transaction.ID)
+
 	if err := dbtx.Commit(); err != nil {
 		return nil, fmt.Errorf("failed to commit sandbox transaction: %w", err)
 	}
@@ -115,13 +117,13 @@ func (s *SandboxService) Checkout(ctx context.Context, req SandboxCheckoutReques
 	if err := s.createNotification(ctx, req.UserID, domain.NotificationCategoryTransaction,
 		"Transaksi Berhasil",
 		fmt.Sprintf("%s berhasil diproses. Total pembayaran %s.", req.ProductName, formatSandboxCurrency(totalPayment)),
-		map[string]string{"transactionId": transactionID},
+		map[string]string{"transactionId": displayTransactionID},
 	); err != nil {
 		return nil, err
 	}
 
 	return &domain.SandboxCheckoutResponse{
-		TransactionID: transactionID,
+		TransactionID: displayTransactionID,
 		Status:        domain.TransactionStatusSuccess,
 		Title:         "Transaksi dummy berhasil",
 		Message:       fmt.Sprintf("%s berhasil diproses untuk pengujian.", req.ProductName),
@@ -169,13 +171,13 @@ func (s *SandboxService) CompleteDeposit(ctx context.Context, userID, depositID 
 	if err := s.createNotification(ctx, userID, domain.NotificationCategoryDeposit,
 		"Deposit Berhasil",
 		fmt.Sprintf("Top up saldo %s berhasil masuk ke akun Anda.", formatSandboxCurrency(deposit.Amount)),
-		map[string]string{"depositId": depositID},
+		map[string]string{"depositId": repository.DisplayID(deposit.PublicID, deposit.ID)},
 	); err != nil {
 		return nil, err
 	}
 
 	return &domain.SandboxDepositCompleteResponse{
-		DepositID: depositID,
+		DepositID: repository.DisplayID(deposit.PublicID, deposit.ID),
 		Status:    domain.DepositStatusSuccess,
 		Message:   "Deposit dummy berhasil diselesaikan.",
 		Balance: &domain.SandboxBalanceDelta{

@@ -71,6 +71,7 @@ func main() {
 	contactRepo := repository.NewContactRepository(db)
 	homeRepo := repository.NewHomeRepository() // No DB needed - in-memory data
 	historyRepo := repository.NewHistoryRepository(db)
+	refundRepo := repository.NewRefundRepository(db)
 	notificationRepo := repository.NewNotificationRepository(db)
 	depositRepo := repository.NewDepositRepository(db)
 	territoryRepo := repository.NewTerritoryRepository(db)
@@ -141,6 +142,7 @@ func main() {
 	prepaidService := service.NewPrepaidService(
 		prepaidRepo,
 		balanceRepo,
+		refundRepo,
 		userRepo,
 		productRepo,
 		gerbangClient,
@@ -149,6 +151,7 @@ func main() {
 	postpaidService := service.NewPostpaidService(
 		postpaidRepo,
 		balanceRepo,
+		refundRepo,
 		voucherRepo,
 		userRepo,
 		productRepo,
@@ -158,6 +161,7 @@ func main() {
 	transferService := service.NewTransferService(
 		transferRepo,
 		balanceRepo,
+		refundRepo,
 		userRepo,
 		productRepo,
 		gerbangClient,

@@ -13,7 +13,6 @@ import (
 	"github.com/GTDGit/PPOB_BE/internal/domain"
 	"github.com/GTDGit/PPOB_BE/internal/external/gerbang"
 	"github.com/GTDGit/PPOB_BE/internal/repository"
-	"github.com/google/uuid"
 )
 
 // DepositService handles deposit business logic
@@ -79,7 +78,7 @@ func (s *DepositService) CreateBankTransfer(ctx context.Context, userID string, 
 
 	// Create deposit
 	deposit := &domain.Deposit{
-		ID:          fmt.Sprintf("dep_bank_%s", uuid.New().String()[:8]),
+		ID:          repository.NewUUID(),
 		UserID:      userID,
 		Method:      domain.DepositMethodBankTransfer,
 		Amount:      amount,
@@ -158,7 +157,7 @@ func (s *DepositService) CreateQRIS(ctx context.Context, userID string, amount i
 	}
 
 	// Create deposit ID (will be used as reference ID)
-	depositID := fmt.Sprintf("dep_qris_%s", uuid.New().String()[:8])
+	depositID := repository.NewUUID()
 
 	// Call Gerbang API to create QRIS payment
 	gerbangResp, err := s.gerbangClient.CreateQRISPayment(ctx, depositID, totalAmount, gerbang.CustomerInfo{
@@ -316,7 +315,7 @@ func (s *DepositService) CreateRetail(ctx context.Context, userID, providerCode 
 	}
 
 	// Create deposit ID (will be used as reference ID)
-	depositID := fmt.Sprintf("dep_retail_%s", uuid.New().String()[:8])
+	depositID := repository.NewUUID()
 
 	// Call Gerbang API to create retail payment
 	gerbangResp, err := s.gerbangClient.CreateRetailPayment(ctx, depositID, providerCode, totalAmount, gerbang.CustomerInfo{
@@ -474,7 +473,7 @@ func (s *DepositService) CreateVA(ctx context.Context, userID, bankCode string, 
 	}
 
 	// Create deposit ID (will be used as reference ID)
-	depositID := fmt.Sprintf("dep_va_%s", uuid.New().String()[:8])
+	depositID := repository.NewUUID()
 
 	// Call Gerbang API to create VA payment
 	gerbangResp, err := s.gerbangClient.CreateVAPayment(ctx, depositID, bankCode, totalAmount, gerbang.CustomerInfo{
@@ -714,7 +713,7 @@ func (s *DepositService) HandleWebhook(ctx context.Context, referenceID string) 
 
 func (s *DepositService) toDepositInfo(deposit *domain.Deposit) *domain.DepositInfo {
 	return &domain.DepositInfo{
-		DepositID:            deposit.ID,
+		DepositID:            repository.DisplayID(deposit.PublicID, deposit.ID),
 		Method:               deposit.Method,
 		MethodName:           getMethodName(deposit.Method),
 		Amount:               deposit.Amount,
@@ -740,7 +739,7 @@ func (s *DepositService) toDepositDetail(deposit *domain.Deposit) *domain.Deposi
 	}
 
 	return &domain.DepositDetail{
-		DepositID:            deposit.ID,
+		DepositID:            repository.DisplayID(deposit.PublicID, deposit.ID),
 		Method:               deposit.Method,
 		MethodName:           getMethodName(deposit.Method),
 		Amount:               deposit.Amount,
@@ -835,7 +834,7 @@ func (s *DepositService) integrationMode(externalID string) string {
 
 func (s *DepositService) toDepositSummary(deposit *domain.Deposit) *domain.DepositSummary {
 	return &domain.DepositSummary{
-		DepositID:            deposit.ID,
+		DepositID:            repository.DisplayID(deposit.PublicID, deposit.ID),
 		Method:               deposit.Method,
 		MethodName:           getMethodName(deposit.Method),
 		Amount:               deposit.Amount,

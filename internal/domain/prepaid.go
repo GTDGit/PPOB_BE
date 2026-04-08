@@ -19,6 +19,7 @@ type PrepaidInquiry struct {
 // PrepaidOrder represents order data
 type PrepaidOrder struct {
 	ID            string    `db:"id" json:"id"`
+	PublicID      *string   `db:"public_id" json:"publicId,omitempty"`
 	UserID        string    `db:"user_id" json:"userId"`
 	InquiryID     string    `db:"inquiry_id" json:"inquiryId"`
 	ProductID     string    `db:"product_id" json:"productId"`
@@ -38,6 +39,7 @@ type PrepaidOrder struct {
 // PrepaidTransaction represents transaction data
 type PrepaidTransaction struct {
 	ID              string     `db:"id" json:"id"`
+	PublicID        *string    `db:"public_id" json:"publicId,omitempty"`
 	UserID          string     `db:"user_id" json:"userId"`
 	OrderID         string     `db:"order_id" json:"orderId"`
 	Status          string     `db:"status" json:"status"`

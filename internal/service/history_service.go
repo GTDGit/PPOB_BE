@@ -85,6 +85,7 @@ func (s *HistoryService) GetDetail(ctx context.Context, userID, transactionID st
 func (s *HistoryService) toTransactionSummary(tx *domain.Transaction) *domain.TransactionSummary {
 	title, description, icon := s.getTransactionDisplay(tx)
 	statusLabel := s.getStatusLabel(tx.Status)
+	displayID := repository.DisplayID(tx.PublicID, tx.ID)
 
 	var completedAt *string
 	if tx.CompletedAt != nil {
@@ -99,7 +100,7 @@ func (s *HistoryService) toTransactionSummary(tx *domain.Transaction) *domain.Tr
 	}
 
 	return &domain.TransactionSummary{
-		ID:                   tx.ID,
+		ID:                   displayID,
 		Type:                 tx.Type,
 		ServiceType:          serviceTypePtr,
 		Title:                title,
@@ -121,6 +122,7 @@ func (s *HistoryService) toTransactionSummary(tx *domain.Transaction) *domain.Tr
 func (s *HistoryService) buildTransactionDetail(tx *domain.Transaction) *domain.TransactionDetailResponse {
 	title, _, _ := s.getTransactionDisplay(tx)
 	statusLabel := s.getStatusLabel(tx.Status)
+	displayID := repository.DisplayID(tx.PublicID, tx.ID)
 
 	serviceType := tx.ServiceType
 	var serviceTypePtr *string
@@ -136,7 +138,7 @@ func (s *HistoryService) buildTransactionDetail(tx *domain.Transaction) *domain.
 
 	response := &domain.TransactionDetailResponse{
 		Transaction: &domain.HistoryTransactionInfo{
-			ID:          tx.ID,
+			ID:          displayID,
 			Type:        tx.Type,
 			ServiceType: serviceTypePtr,
 			Title:       title,
@@ -379,12 +381,12 @@ func (s *HistoryService) GetReceipt(ctx context.Context, userID, transactionID s
 
 	// Build receipt response
 	return &domain.ReceiptResponse{
-		TransactionID: tx.ID,
+		TransactionID: repository.DisplayID(tx.PublicID, tx.ID),
 		Title:         "Struk Transaksi",
 		Subtitle:      "Transaksi Berhasil",
 		Amount:        formatHomeCurrency(tx.TotalPayment),
 		Date:          tx.CreatedAt.Format("02 Jan 2006, 15:04"),
-		ReceiptURL:    fmt.Sprintf("https://receipt.ppob.id/%s", tx.ID),
+		ReceiptURL:    fmt.Sprintf("https://receipt.ppob.id/%s", repository.DisplayID(tx.PublicID, tx.ID)),
 	}, nil
 }
 
@@ -441,9 +443,9 @@ func (s *HistoryService) GetShareData(ctx context.Context, userID, transactionID
 
 	return &domain.ShareReceiptResponse{
 		ShareText: text,
-		ShareURL:  fmt.Sprintf("https://receipt.ppob.id/%s", tx.ID),
-		ImageURL:  fmt.Sprintf("https://receipt.ppob.id/%s.png", tx.ID),
-		DeepLink:  fmt.Sprintf("ppobid://receipt/%s", tx.ID),
+		ShareURL:  fmt.Sprintf("https://receipt.ppob.id/%s", repository.DisplayID(tx.PublicID, tx.ID)),
+		ImageURL:  fmt.Sprintf("https://receipt.ppob.id/%s.png", repository.DisplayID(tx.PublicID, tx.ID)),
+		DeepLink:  fmt.Sprintf("ppobid://receipt/%s", repository.DisplayID(tx.PublicID, tx.ID)),
 		CanShare:  true,
 		CanCopy:   true,
 		CanPrint:  true,

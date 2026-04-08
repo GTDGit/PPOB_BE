@@ -42,7 +42,7 @@ func NewTransferRepository(db *sqlx.DB) TransferRepository {
 const transferInquiryColumns = `id, user_id, bank_code, bank_name, account_number, account_name,
 	amount, admin_fee, total_payment, gerbang_inquiry_id, fee, expires_at, created_at`
 
-const transferTransactionColumns = `id, user_id, inquiry_id, status, bank_code, bank_name,
+const transferTransactionColumns = `id, public_id, user_id, inquiry_id, status, bank_code, bank_name,
 	account_number, account_name, amount, admin_fee, total_payment, note, balance_before,
 	balance_after, reference_number, gerbang_transfer_id, purpose, fee, completed_at,
 	created_at, updated_at`
@@ -103,13 +103,24 @@ func (r *transferRepository) FindInquiryByUserAndID(ctx context.Context, userID,
 
 // CreateTransaction creates a new transaction record
 func (r *transferRepository) CreateTransaction(ctx context.Context, tx *domain.TransferTransaction) error {
+	if tx.ID == "" {
+		tx.ID = NewUUID()
+	}
+	if tx.PublicID == nil || *tx.PublicID == "" {
+		publicID, err := GeneratePublicTransactionID(ctx, r.db)
+		if err != nil {
+			return err
+		}
+		tx.PublicID = &publicID
+	}
+
 	query := `
 		INSERT INTO transfer_transactions (
-			id, user_id, inquiry_id, status, bank_code, bank_name, account_number, account_name,
+			id, public_id, user_id, inquiry_id, status, bank_code, bank_name, account_number, account_name,
 			amount, admin_fee, total_payment, note, balance_before, balance_after,
 			reference_number, gerbang_transfer_id, purpose, fee, completed_at, created_at, updated_at
 		) VALUES (
-			:id, :user_id, :inquiry_id, :status, :bank_code, :bank_name, :account_number, :account_name,
+			:id, :public_id, :user_id, :inquiry_id, :status, :bank_code, :bank_name, :account_number, :account_name,
 			:amount, :admin_fee, :total_payment, :note, :balance_before, :balance_after,
 			:reference_number, :gerbang_transfer_id, :purpose, :fee, :completed_at, :created_at, :updated_at
 		)
@@ -120,13 +131,24 @@ func (r *transferRepository) CreateTransaction(ctx context.Context, tx *domain.T
 
 // CreateTransactionWithTx creates a new transaction record within a database transaction
 func (r *transferRepository) CreateTransactionWithTx(ctx context.Context, dbtx *sqlx.Tx, tx *domain.TransferTransaction) error {
+	if tx.ID == "" {
+		tx.ID = NewUUID()
+	}
+	if tx.PublicID == nil || *tx.PublicID == "" {
+		publicID, err := GeneratePublicTransactionID(ctx, dbtx)
+		if err != nil {
+			return err
+		}
+		tx.PublicID = &publicID
+	}
+
 	query := `
 		INSERT INTO transfer_transactions (
-			id, user_id, inquiry_id, status, bank_code, bank_name, account_number, account_name,
+			id, public_id, user_id, inquiry_id, status, bank_code, bank_name, account_number, account_name,
 			amount, admin_fee, total_payment, note, balance_before, balance_after,
 			reference_number, gerbang_transfer_id, purpose, fee, completed_at, created_at, updated_at
 		) VALUES (
-			:id, :user_id, :inquiry_id, :status, :bank_code, :bank_name, :account_number, :account_name,
+			:id, :public_id, :user_id, :inquiry_id, :status, :bank_code, :bank_name, :account_number, :account_name,
 			:amount, :admin_fee, :total_payment, :note, :balance_before, :balance_after,
 			:reference_number, :gerbang_transfer_id, :purpose, :fee, :completed_at, :created_at, :updated_at
 		)
@@ -138,7 +160,7 @@ func (r *transferRepository) CreateTransactionWithTx(ctx context.Context, dbtx *
 // FindTransactionByID finds a transaction by ID
 func (r *transferRepository) FindTransactionByID(ctx context.Context, id string) (*domain.TransferTransaction, error) {
 	var tx domain.TransferTransaction
-	query := fmt.Sprintf(`SELECT %s FROM transfer_transactions WHERE id = $1`, transferTransactionColumns)
+	query := fmt.Sprintf(`SELECT %s FROM transfer_transactions WHERE id = $1 OR public_id = $1 ORDER BY CASE WHEN id = $1 THEN 0 ELSE 1 END LIMIT 1`, transferTransactionColumns)
 	err := r.db.GetContext(ctx, &tx, query, id)
 	if err == sql.ErrNoRows {
 		return nil, nil

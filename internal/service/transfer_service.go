@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/GTDGit/PPOB_BE/internal/domain"
 	"github.com/GTDGit/PPOB_BE/internal/external/gerbang"
 	"github.com/GTDGit/PPOB_BE/internal/repository"
@@ -16,6 +15,7 @@ import (
 type TransferService struct {
 	transferRepo  repository.TransferRepository
 	balanceRepo   repository.BalanceRepository
+	refundRepo    repository.RefundRepository
 	userRepo      repository.UserRepository
 	productRepo   repository.ProductRepository
 	gerbangClient *gerbang.Client
@@ -25,6 +25,7 @@ type TransferService struct {
 func NewTransferService(
 	transferRepo repository.TransferRepository,
 	balanceRepo repository.BalanceRepository,
+	refundRepo repository.RefundRepository,
 	userRepo repository.UserRepository,
 	productRepo repository.ProductRepository,
 	gerbangClient *gerbang.Client,
@@ -32,6 +33,7 @@ func NewTransferService(
 	return &TransferService{
 		transferRepo:  transferRepo,
 		balanceRepo:   balanceRepo,
+		refundRepo:    refundRepo,
 		userRepo:      userRepo,
 		productRepo:   productRepo,
 		gerbangClient: gerbangClient,
@@ -104,7 +106,7 @@ func (s *TransferService) Inquiry(ctx context.Context, req TransferInquiryReques
 	}
 
 	// Create inquiry record
-	inquiryID := "inq_tf_" + uuid.New().String()[:8]
+	inquiryID := repository.NewUUID()
 	inquiry := &domain.TransferInquiry{
 		ID:               inquiryID,
 		UserID:           req.UserID,
@@ -249,7 +251,7 @@ func (s *TransferService) Execute(ctx context.Context, req TransferExecuteReques
 	// Execute transfer in database transaction
 	var balanceBefore, balanceAfter int64
 	var referenceNumber string
-	transactionID := "trx_tf_" + uuid.New().String()[:8]
+	transactionID := repository.NewUUID()
 
 	// Begin transaction
 	tx, err := s.transferRepo.BeginTx(ctx)
@@ -367,7 +369,7 @@ func (s *TransferService) Execute(ctx context.Context, req TransferExecuteReques
 	completedAtStr := completedAt.Format(time.RFC3339)
 	response := &domain.TransferExecuteResponse{
 		Transaction: &domain.TransferTransactionInfo{
-			TransactionID: transactionID,
+			TransactionID: repository.DisplayID(transaction.PublicID, transaction.ID),
 			InquiryID:     req.InquiryID,
 			Status:        status,
 			CompletedAt:   &completedAtStr,
@@ -593,6 +595,16 @@ func getMockAccountName(accountNumber string) string {
 
 // Refund restores balance for failed/cancelled transaction
 func (s *TransferService) Refund(ctx context.Context, transactionID, reason string) error {
+	if s.refundRepo != nil {
+		existingRefund, err := s.refundRepo.FindBySourceTransactionID(ctx, transactionID)
+		if err != nil {
+			return fmt.Errorf("failed to check existing refund: %w", err)
+		}
+		if existingRefund != nil {
+			return nil
+		}
+	}
+
 	// Begin transaction
 	tx, err := s.transferRepo.BeginTx(ctx)
 	if err != nil {
@@ -633,8 +645,31 @@ func (s *TransferService) Refund(ctx context.Context, transactionID, reason stri
 	// Update transaction status to refunded
 	transaction.Status = domain.TransactionRefunded
 	transaction.UpdatedAt = time.Now()
-	if err := s.transferRepo.UpdateTransactionStatus(ctx, transactionID, domain.TransactionRefunded); err != nil {
+	if err := s.transferRepo.UpdateTransactionStatusWithTx(ctx, tx, transactionID, domain.TransactionRefunded); err != nil {
 		return fmt.Errorf("failed to update transaction status: %w", err)
+	}
+
+	if s.refundRepo != nil {
+		now := time.Now()
+		var reasonPtr *string
+		if reason != "" {
+			reasonCopy := reason
+			reasonPtr = &reasonCopy
+		}
+		refund := &domain.Refund{
+			SourceTransactionID: transaction.ID,
+			SourceType:          domain.TransactionTypeTransfer,
+			UserID:              transaction.UserID,
+			Amount:              transaction.TotalPayment,
+			Reason:              reasonPtr,
+			Status:              domain.RefundStatusSuccess,
+			RefundedAt:          &now,
+			CreatedAt:           now,
+			UpdatedAt:           now,
+		}
+		if err := s.refundRepo.CreateWithTx(ctx, tx, refund); err != nil {
+			return fmt.Errorf("failed to create refund record: %w", err)
+		}
 	}
 
 	// TODO: Create balance history record when balance_history table is ready
@@ -706,6 +741,18 @@ func (s *TransferService) HandleWebhook(ctx context.Context, webhookData *gerban
 
 	// If transfer failed, refund balance to user
 	if refundNeeded {
+		if s.refundRepo != nil {
+			existingRefund, err := s.refundRepo.FindBySourceTransactionID(ctx, transaction.ID)
+			if err != nil {
+				return fmt.Errorf("failed to check existing refund: %w", err)
+			}
+			if existingRefund != nil {
+				refundNeeded = false
+			}
+		}
+	}
+
+	if refundNeeded {
 		// Lock and get user balance
 		balance, err := s.balanceRepo.FindByUserIDForUpdate(ctx, tx, transaction.UserID)
 		if err != nil {
@@ -721,6 +768,28 @@ func (s *TransferService) HandleWebhook(ctx context.Context, webhookData *gerban
 
 		if err := s.balanceRepo.UpdateWithTx(ctx, tx, balance); err != nil {
 			return fmt.Errorf("failed to restore balance: %w", err)
+		}
+
+		if s.refundRepo != nil {
+			var reasonPtr *string
+			if webhookData.FailedReason != nil && *webhookData.FailedReason != "" {
+				reasonCopy := *webhookData.FailedReason
+				reasonPtr = &reasonCopy
+			}
+			refund := &domain.Refund{
+				SourceTransactionID: transaction.ID,
+				SourceType:          domain.TransactionTypeTransfer,
+				UserID:              transaction.UserID,
+				Amount:              transaction.TotalPayment,
+				Reason:              reasonPtr,
+				Status:              domain.RefundStatusSuccess,
+				RefundedAt:          &now,
+				CreatedAt:           now,
+				UpdatedAt:           now,
+			}
+			if err := s.refundRepo.CreateWithTx(ctx, tx, refund); err != nil {
+				return fmt.Errorf("failed to create refund record: %w", err)
+			}
 		}
 
 		// TODO: Create balance history record (refund)

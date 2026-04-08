@@ -27,6 +27,7 @@ type PostpaidInquiry struct {
 // PostpaidTransaction represents completed bill payment
 type PostpaidTransaction struct {
 	ID           string  `db:"id" json:"id"`
+	PublicID     *string `db:"public_id" json:"publicId,omitempty"`
 	UserID       string  `db:"user_id" json:"userId"`
 	InquiryID    string  `db:"inquiry_id" json:"inquiryId"`
 	ServiceType  string  `db:"service_type" json:"serviceType"`

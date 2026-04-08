@@ -285,9 +285,14 @@ func (s *AuthService) CompleteProfile(ctx context.Context, req CompleteProfileRe
 
 	if user == nil {
 		// Create new user
+		mic, err := s.userRepo.GenerateMIC(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate MIC: %w", err)
+		}
+
 		user = &domain.User{
-			ID:               "usr_" + uuid.New().String()[:8],
-			MIC:              "PID" + uuid.New().String()[:8],
+			ID:               repository.NewUUID(),
+			MIC:              mic,
 			Phone:            phone,
 			FullName:         req.FullName,
 			Gender:           &req.Gender,

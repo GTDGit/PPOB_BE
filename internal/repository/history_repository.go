@@ -47,6 +47,7 @@ type historyRepository struct {
 
 const historySelectColumns = `
 	id,
+	public_id,
 	user_id,
 	order_id,
 	inquiry_id,
@@ -82,7 +83,7 @@ func (r *historyRepository) BeginTx(ctx context.Context) (*sqlx.Tx, error) {
 
 // FindByID finds a transaction by ID.
 func (r *historyRepository) FindByID(ctx context.Context, id string) (*domain.Transaction, error) {
-	query := `SELECT ` + historySelectColumns + ` FROM transactions WHERE id = $1`
+	query := `SELECT ` + historySelectColumns + ` FROM transactions WHERE id = $1 OR public_id = $1 ORDER BY CASE WHEN id = $1 THEN 0 ELSE 1 END LIMIT 1`
 
 	var tx domain.Transaction
 	if err := r.db.GetContext(ctx, &tx, query, id); err != nil {
@@ -97,7 +98,7 @@ func (r *historyRepository) FindByID(ctx context.Context, id string) (*domain.Tr
 
 // FindByUserAndID finds a transaction by user ID and transaction ID.
 func (r *historyRepository) FindByUserAndID(ctx context.Context, userID, id string) (*domain.Transaction, error) {
-	query := `SELECT ` + historySelectColumns + ` FROM transactions WHERE id = $1 AND user_id = $2`
+	query := `SELECT ` + historySelectColumns + ` FROM transactions WHERE (id = $1 OR public_id = $1) AND user_id = $2 ORDER BY CASE WHEN id = $1 THEN 0 ELSE 1 END LIMIT 1`
 
 	var tx domain.Transaction
 	if err := r.db.GetContext(ctx, &tx, query, id, userID); err != nil {
@@ -150,7 +151,7 @@ func (r *historyRepository) FindByUserID(ctx context.Context, userID string, fil
 		search := "%" + strings.ToLower(strings.TrimSpace(filter.Search)) + "%"
 		whereClauses = append(
 			whereClauses,
-			fmt.Sprintf("(LOWER(COALESCE(product_name, '')) LIKE $%d OR LOWER(target) LIKE $%d)", argIdx, argIdx),
+			fmt.Sprintf("(LOWER(COALESCE(product_name, '')) LIKE $%d OR LOWER(target) LIKE $%d OR LOWER(COALESCE(public_id, '')) LIKE $%d)", argIdx, argIdx, argIdx),
 		)
 		args = append(args, search)
 		argIdx++
@@ -234,13 +235,35 @@ func (r *historyRepository) UpdateStatus(ctx context.Context, id, status string,
 }
 
 func (r *historyRepository) create(ctx context.Context, exec sqlx.ExtContext, tx *domain.Transaction) error {
+	if tx.ID == "" {
+		tx.ID = NewUUID()
+	}
+	if tx.PublicID == nil || *tx.PublicID == "" {
+		var (
+			publicID string
+			err      error
+		)
+		switch typedExec := exec.(type) {
+		case *sqlx.Tx:
+			publicID, err = GeneratePublicTransactionID(ctx, typedExec)
+		case *sqlx.DB:
+			publicID, err = GeneratePublicTransactionID(ctx, typedExec)
+		default:
+			err = fmt.Errorf("unsupported history transaction executor")
+		}
+		if err != nil {
+			return err
+		}
+		tx.PublicID = &publicID
+	}
+
 	query := `
 		INSERT INTO transactions (
-			id, user_id, type, service_type, inquiry_id, order_id, target, product_id,
+			id, public_id, user_id, type, service_type, inquiry_id, order_id, target, product_id,
 			product_name, price, admin_fee, voucher_discount, total_payment, status,
 			status_message, reference_number, serial_number, token, completed_at, created_at, updated_at
 		) VALUES (
-			:id, :user_id, :type, :service_type, :inquiry_id, :order_id, :target, :product_id,
+			:id, :public_id, :user_id, :type, :service_type, :inquiry_id, :order_id, :target, :product_id,
 			:product_name, :amount, :admin_fee, :discount, :total_payment, :status,
 			:failure_reason, :provider_ref, :serial_number, :token, :completed_at, :created_at, :updated_at
 		)

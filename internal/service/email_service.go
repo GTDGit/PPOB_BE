@@ -9,6 +9,7 @@ import (
 	"github.com/GTDGit/PPOB_BE/internal/config"
 	internalbrevo "github.com/GTDGit/PPOB_BE/internal/external/brevo"
 	internalses "github.com/GTDGit/PPOB_BE/internal/external/ses"
+	internalsmtp "github.com/GTDGit/PPOB_BE/internal/external/smtp"
 	"github.com/GTDGit/PPOB_BE/internal/repository"
 	"github.com/google/uuid"
 )
@@ -16,6 +17,7 @@ import (
 const (
 	emailProviderBrevo = "brevo"
 	emailProviderSES   = "ses"
+	emailProviderSMTP  = "smtp"
 )
 
 type EmailService struct {
@@ -23,6 +25,7 @@ type EmailService struct {
 	brevoCfg    config.BrevoConfig
 	brevoClient *internalbrevo.Client
 	sesClient   *internalses.Client
+	smtpClient  *internalsmtp.Client
 	adminRepo   *repository.AdminRepository
 }
 
@@ -59,6 +62,10 @@ func NewEmailService(emailCfg config.EmailConfig, brevoCfg config.BrevoConfig, a
 			return nil, err
 		}
 		service.sesClient = sesClient
+	}
+
+	if strings.EqualFold(emailCfg.Provider, emailProviderSMTP) {
+		service.smtpClient = internalsmtp.NewClient(emailCfg.SMTP)
 	}
 
 	return service, nil
@@ -299,6 +306,22 @@ func (s *EmailService) SendMailboxReply(ctx context.Context, req MailReplyReques
 		return "", fmt.Errorf("mailbox reply is not supported on brevo provider")
 	}
 
+	if s.useSMTP() {
+		return s.sendViaSMTP(ctx, smtpSendRequest{
+			Category:     req.Category,
+			ToEmail:      req.ToAddresses[0],
+			FromEmail:    req.FromAddress,
+			FromName:     req.FromName,
+			Subject:      req.Subject,
+			HTMLBody:     req.HTMLBody,
+			TextBody:     req.TextBody,
+			ReplyTo:      req.ReplyToAddresses,
+			CcAddresses:  req.CcAddresses,
+			BccAddresses: req.BccAddresses,
+			Headers:      req.Headers,
+		})
+	}
+
 	messageID, err := s.sendViaSES(ctx, sesSendRequest{
 		Category:     req.Category,
 		ToEmail:      req.ToAddresses[0],
@@ -393,6 +416,24 @@ func (s *EmailService) sendCustomEmail(ctx context.Context, req sendCustomEmailR
 		return nil
 	}
 
+	if s.useSMTP() {
+		messageID, err := s.sendViaSMTP(ctx, smtpSendRequest{
+			Category: req.Category,
+			ToEmail:  req.ToEmail,
+			ToName:   req.ToName,
+			Subject:  req.Subject,
+			HTMLBody: req.HTMLBody,
+			TextBody: req.TextBody,
+			ReplyTo:  req.ReplyTo,
+		})
+		status := "queued"
+		if err != nil {
+			status = "failed"
+		}
+		s.logTransactionalDispatch(ctx, req.Category, "", req.ToEmail, s.emailCfg.DefaultFromEmail, s.emailCfg.DefaultFromName, messageID, status, err, nil)
+		return err
+	}
+
 	messageID, err := s.sendViaSES(ctx, sesSendRequest{
 		Category:  req.Category,
 		ToEmail:   req.ToEmail,
@@ -414,6 +455,44 @@ func (s *EmailService) sendCustomEmail(ctx context.Context, req sendCustomEmailR
 		return err
 	}
 	return nil
+}
+
+type smtpSendRequest struct {
+	Category     string
+	ToEmail      string
+	ToName       string
+	FromEmail    string
+	FromName     string
+	Subject      string
+	HTMLBody     string
+	TextBody     string
+	ReplyTo      []string
+	CcAddresses  []string
+	BccAddresses []string
+	Headers      map[string]string
+}
+
+func (s *EmailService) useSMTP() bool {
+	return s.providerName() == emailProviderSMTP
+}
+
+func (s *EmailService) sendViaSMTP(ctx context.Context, req smtpSendRequest) (string, error) {
+	if s.smtpClient == nil || !s.smtpClient.IsEnabled() {
+		return "", nil
+	}
+
+	return s.smtpClient.Send(ctx, internalsmtp.SendMessageInput{
+		FromAddress:      firstNonEmpty(req.FromEmail, s.emailCfg.DefaultFromEmail),
+		FromName:         firstNonEmpty(req.FromName, s.emailCfg.DefaultFromName),
+		ToAddresses:      []string{req.ToEmail},
+		CcAddresses:      req.CcAddresses,
+		BccAddresses:     req.BccAddresses,
+		ReplyToAddresses: req.ReplyTo,
+		Subject:          req.Subject,
+		HTMLBody:         req.HTMLBody,
+		TextBody:         req.TextBody,
+		Headers:          req.Headers,
+	})
 }
 
 func (s *EmailService) sendViaSES(ctx context.Context, req sesSendRequest) (string, error) {
@@ -468,10 +547,15 @@ func (s *EmailService) logTransactionalDispatch(ctx context.Context, category, m
 }
 
 func (s *EmailService) providerName() string {
-	if strings.EqualFold(strings.TrimSpace(s.emailCfg.Provider), emailProviderSES) {
+	p := strings.ToLower(strings.TrimSpace(s.emailCfg.Provider))
+	switch p {
+	case emailProviderSES:
 		return emailProviderSES
+	case emailProviderSMTP:
+		return emailProviderSMTP
+	default:
+		return emailProviderBrevo
 	}
-	return emailProviderBrevo
 }
 
 func (s *EmailService) useBrevo() bool {

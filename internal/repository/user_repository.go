@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/GTDGit/PPOB_BE/internal/domain"
-	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -141,20 +140,7 @@ func (r *userRepository) VerifyEmail(ctx context.Context, userID, email string) 
 }
 
 func (r *userRepository) GenerateMIC(ctx context.Context) (string, error) {
-	// Generate unique MIC (Merchant Identification Code)
-	// Format: PID + 5 digits
-	for i := 0; i < 10; i++ {
-		mic := "PID" + generateRandomDigits(5)
-		exists, err := r.micExists(ctx, mic)
-		if err != nil {
-			return "", err
-		}
-		if !exists {
-			return mic, nil
-		}
-	}
-	// If still collision after 10 tries, use UUID-based approach
-	return "PID" + uuid.New().String()[:5], nil
+	return GenerateMIC(ctx, r.db)
 }
 
 func (r *userRepository) GenerateReferralCode(ctx context.Context) (string, error) {

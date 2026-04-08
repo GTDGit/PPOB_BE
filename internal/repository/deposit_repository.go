@@ -48,7 +48,7 @@ type depositRepository struct {
 
 // Column constants for explicit SELECT
 const (
-	depositColumns = `id, user_id, method, provider_code, bank_code, amount, admin_fee, 
+	depositColumns = `id, public_id, user_id, method, provider_code, bank_code, amount, admin_fee,
 		unique_code, total_amount, status, payment_data, external_id, reference_number, 
 		payer_name, payer_bank, payer_account, expires_at, paid_at, created_at, updated_at`
 
@@ -69,19 +69,31 @@ func NewDepositRepository(db *sqlx.DB) DepositRepository {
 
 // Create creates a new deposit
 func (r *depositRepository) Create(ctx context.Context, deposit *domain.Deposit) error {
+	if deposit.ID == "" {
+		deposit.ID = NewUUID()
+	}
+	if deposit.PublicID == nil || *deposit.PublicID == "" {
+		publicID, err := GeneratePublicDepositID(ctx, r.db)
+		if err != nil {
+			return err
+		}
+		deposit.PublicID = &publicID
+	}
+
 	query := `
 		INSERT INTO deposits (
-			id, user_id, method, provider_code, bank_code, amount, admin_fee, 
+			id, public_id, user_id, method, provider_code, bank_code, amount, admin_fee,
 			unique_code, total_amount, status, payment_data, external_id, 
 			reference_number, payer_name, payer_bank, payer_account, expires_at, 
 			paid_at, created_at, updated_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
 		)
 	`
 
 	_, err := r.db.ExecContext(ctx, query,
 		deposit.ID,
+		deposit.PublicID,
 		deposit.UserID,
 		deposit.Method,
 		deposit.ProviderCode,
@@ -108,7 +120,7 @@ func (r *depositRepository) Create(ctx context.Context, deposit *domain.Deposit)
 
 // FindByID finds a deposit by ID
 func (r *depositRepository) FindByID(ctx context.Context, id string) (*domain.Deposit, error) {
-	query := `SELECT ` + depositColumns + ` FROM deposits WHERE id = $1`
+	query := `SELECT ` + depositColumns + ` FROM deposits WHERE id = $1 OR public_id = $1 ORDER BY CASE WHEN id = $1 THEN 0 ELSE 1 END LIMIT 1`
 
 	var deposit domain.Deposit
 	err := r.db.GetContext(ctx, &deposit, query, id)
@@ -124,11 +136,11 @@ func (r *depositRepository) FindByID(ctx context.Context, id string) (*domain.De
 
 // FindByUserAndID finds a deposit by user ID and deposit ID (ownership validation)
 func (r *depositRepository) FindByUserAndID(ctx context.Context, userID, id string) (*domain.Deposit, error) {
-	query := `SELECT ` + depositColumns + ` FROM deposits WHERE id = $1 AND user_id = $2`
+	query := `SELECT ` + depositColumns + ` FROM deposits WHERE (id = $1 OR public_id = $1) AND user_id = $2 ORDER BY CASE WHEN id = $1 THEN 0 ELSE 1 END LIMIT 1`
 	args := []interface{}{id, userID}
 
 	if userID == "" {
-		query = `SELECT ` + depositColumns + ` FROM deposits WHERE id = $1`
+		query = `SELECT ` + depositColumns + ` FROM deposits WHERE id = $1 OR public_id = $1 ORDER BY CASE WHEN id = $1 THEN 0 ELSE 1 END LIMIT 1`
 		args = []interface{}{id}
 	}
 

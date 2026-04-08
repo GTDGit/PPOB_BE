@@ -5,6 +5,7 @@ import "time"
 // Deposit represents a deposit transaction
 type Deposit struct {
 	ID              string     `db:"id" json:"id"`
+	PublicID        *string    `db:"public_id" json:"publicId,omitempty"`
 	UserID          string     `db:"user_id" json:"userId"`
 	Method          string     `db:"method" json:"method"`
 	ProviderCode    *string    `db:"provider_code" json:"providerCode"`
