@@ -30,7 +30,7 @@ func (r *AdminRepository) BeginTx(ctx context.Context) (*sqlx.Tx, error) {
 }
 
 const adminUserColumns = `
-	id, email, phone, full_name, password_hash, status, is_active,
+	id, email, phone, full_name, password_hash, avatar_url, status, is_active,
 	last_login_at, invited_by, created_by, created_at, updated_at
 `
 
@@ -142,6 +142,37 @@ func (r *AdminRepository) UpdateAdminStatus(ctx context.Context, adminID, status
 func (r *AdminRepository) UpdateLastLogin(ctx context.Context, adminID string) error {
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE admin_users SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1
+	`, adminID)
+	return err
+}
+
+func (r *AdminRepository) UpdateAdminFullName(ctx context.Context, adminID, fullName string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE admin_users SET full_name = $2, updated_at = NOW() WHERE id = $1
+	`, adminID, fullName)
+	return err
+}
+
+// SyncPersonalMailboxDisplayName updates the display name of the admin's personal mailbox
+// to match their profile name, so the email From header stays in sync.
+func (r *AdminRepository) SyncPersonalMailboxDisplayName(ctx context.Context, adminID, displayName string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE admin_mailboxes SET display_name = $2, updated_at = NOW()
+		WHERE owner_admin_id = $1 AND type = 'personal'
+	`, adminID, displayName)
+	return err
+}
+
+func (r *AdminRepository) UpdateAdminAvatar(ctx context.Context, adminID, avatarURL string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE admin_users SET avatar_url = $2, updated_at = NOW() WHERE id = $1
+	`, adminID, avatarURL)
+	return err
+}
+
+func (r *AdminRepository) ClearAdminAvatar(ctx context.Context, adminID string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE admin_users SET avatar_url = NULL, updated_at = NOW() WHERE id = $1
 	`, adminID)
 	return err
 }

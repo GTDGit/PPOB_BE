@@ -125,6 +125,36 @@ func (h *AdminMailboxHandler) AssignThread(c *gin.Context) {
 	respondWithSuccess(c, http.StatusOK, gin.H{"message": "Thread inbox berhasil di-assign"})
 }
 
+func (h *AdminMailboxHandler) ComposeEmail(c *gin.Context) {
+	var req service.ComposeEmailRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondWithError(c, domain.ErrValidationFailed("Body request compose email tidak valid"))
+		return
+	}
+	resp, err := h.mailboxService.ComposeEmail(c.Request.Context(), middleware.GetAdminID(c), req)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	respondWithSuccess(c, http.StatusOK, resp)
+}
+
+func (h *AdminMailboxHandler) UpdateMailboxDisplayName(c *gin.Context) {
+	var req struct {
+		DisplayName string `json:"displayName" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondWithError(c, domain.ErrValidationFailed("Body request display name tidak valid"))
+		return
+	}
+	resp, err := h.mailboxService.UpdateMailboxDisplayName(c.Request.Context(), middleware.GetAdminID(c), c.Param("id"), req.DisplayName)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	respondWithSuccess(c, http.StatusOK, resp)
+}
+
 func (h *AdminMailboxHandler) ListEmailLogs(c *gin.Context) {
 	resp, err := h.mailboxService.ListEmailLogs(c.Request.Context(), middleware.GetAdminID(c), c.Query("search"), c.Query("status"), c.Query("category"), queryInt(c, "page", 1), queryInt(c, "perPage", 20))
 	if err != nil {

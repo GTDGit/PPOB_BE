@@ -309,7 +309,7 @@ func (s *EmailService) SendMailboxReply(ctx context.Context, req MailReplyReques
 	if s.useSMTP() {
 		return s.sendViaSMTP(ctx, smtpSendRequest{
 			Category:     req.Category,
-			ToEmail:      req.ToAddresses[0],
+			ToAddresses:  req.ToAddresses,
 			FromEmail:    req.FromAddress,
 			FromName:     req.FromName,
 			Subject:      req.Subject,
@@ -324,8 +324,7 @@ func (s *EmailService) SendMailboxReply(ctx context.Context, req MailReplyReques
 
 	messageID, err := s.sendViaSES(ctx, sesSendRequest{
 		Category:     req.Category,
-		ToEmail:      req.ToAddresses[0],
-		ToName:       "",
+		ToAddresses:  req.ToAddresses,
 		FromEmail:    req.FromAddress,
 		FromName:     req.FromName,
 		Subject:      req.Subject,
@@ -371,8 +370,7 @@ type sendCustomEmailRequest struct {
 
 type sesSendRequest struct {
 	Category     string
-	ToEmail      string
-	ToName       string
+	ToAddresses  []string
 	FromEmail    string
 	FromName     string
 	Subject      string
@@ -418,13 +416,12 @@ func (s *EmailService) sendCustomEmail(ctx context.Context, req sendCustomEmailR
 
 	if s.useSMTP() {
 		messageID, err := s.sendViaSMTP(ctx, smtpSendRequest{
-			Category: req.Category,
-			ToEmail:  req.ToEmail,
-			ToName:   req.ToName,
-			Subject:  req.Subject,
-			HTMLBody: req.HTMLBody,
-			TextBody: req.TextBody,
-			ReplyTo:  req.ReplyTo,
+			Category:    req.Category,
+			ToAddresses: []string{req.ToEmail},
+			Subject:     req.Subject,
+			HTMLBody:    req.HTMLBody,
+			TextBody:    req.TextBody,
+			ReplyTo:     req.ReplyTo,
 		})
 		status := "queued"
 		if err != nil {
@@ -435,16 +432,15 @@ func (s *EmailService) sendCustomEmail(ctx context.Context, req sendCustomEmailR
 	}
 
 	messageID, err := s.sendViaSES(ctx, sesSendRequest{
-		Category:  req.Category,
-		ToEmail:   req.ToEmail,
-		ToName:    req.ToName,
-		FromEmail: s.emailCfg.DefaultFromEmail,
-		FromName:  s.emailCfg.DefaultFromName,
-		Subject:   req.Subject,
-		HTMLBody:  req.HTMLBody,
-		TextBody:  req.TextBody,
-		ReplyTo:   req.ReplyTo,
-		ConfigSet: req.ConfigSet,
+		Category:    req.Category,
+		ToAddresses: []string{req.ToEmail},
+		FromEmail:   s.emailCfg.DefaultFromEmail,
+		FromName:    s.emailCfg.DefaultFromName,
+		Subject:     req.Subject,
+		HTMLBody:    req.HTMLBody,
+		TextBody:    req.TextBody,
+		ReplyTo:     req.ReplyTo,
+		ConfigSet:   req.ConfigSet,
 	})
 	status := "queued"
 	if err != nil {
@@ -459,8 +455,7 @@ func (s *EmailService) sendCustomEmail(ctx context.Context, req sendCustomEmailR
 
 type smtpSendRequest struct {
 	Category     string
-	ToEmail      string
-	ToName       string
+	ToAddresses  []string
 	FromEmail    string
 	FromName     string
 	Subject      string
@@ -484,7 +479,7 @@ func (s *EmailService) sendViaSMTP(ctx context.Context, req smtpSendRequest) (st
 	return s.smtpClient.Send(ctx, internalsmtp.SendMessageInput{
 		FromAddress:      firstNonEmpty(req.FromEmail, s.emailCfg.DefaultFromEmail),
 		FromName:         firstNonEmpty(req.FromName, s.emailCfg.DefaultFromName),
-		ToAddresses:      []string{req.ToEmail},
+		ToAddresses:      req.ToAddresses,
 		CcAddresses:      req.CcAddresses,
 		BccAddresses:     req.BccAddresses,
 		ReplyToAddresses: req.ReplyTo,
@@ -503,7 +498,7 @@ func (s *EmailService) sendViaSES(ctx context.Context, req sesSendRequest) (stri
 	return s.sesClient.Send(ctx, internalses.SendMessageInput{
 		FromAddress:          firstNonEmpty(req.FromEmail, s.emailCfg.DefaultFromEmail),
 		FromName:             firstNonEmpty(req.FromName, s.emailCfg.DefaultFromName),
-		ToAddresses:          []string{req.ToEmail},
+		ToAddresses:          req.ToAddresses,
 		CcAddresses:          req.CcAddresses,
 		BccAddresses:         req.BccAddresses,
 		ReplyToAddresses:     req.ReplyTo,

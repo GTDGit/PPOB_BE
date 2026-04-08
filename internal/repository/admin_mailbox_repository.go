@@ -272,7 +272,8 @@ func (r *AdminRepository) ListMailboxMembers(ctx context.Context, mailboxID stri
 			amm.can_reply,
 			amm.created_at,
 			COALESCE(au.full_name, au.email, '') AS admin_name,
-			au.email
+			au.email,
+			COALESCE(au.avatar_url, '') AS avatar_url
 		FROM admin_mailbox_members amm
 		INNER JOIN admin_users au ON au.id = amm.admin_user_id
 		WHERE amm.mailbox_id = $1

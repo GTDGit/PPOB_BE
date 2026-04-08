@@ -9,8 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"mime/multipart"
+	"path/filepath"
+
 	"github.com/GTDGit/PPOB_BE/internal/config"
 	"github.com/GTDGit/PPOB_BE/internal/domain"
+	internals3 "github.com/GTDGit/PPOB_BE/internal/external/s3"
 	"github.com/GTDGit/PPOB_BE/internal/repository"
 	"github.com/GTDGit/PPOB_BE/pkg/hash"
 	"github.com/GTDGit/PPOB_BE/pkg/jwt"
@@ -23,6 +27,7 @@ import (
 type AdminService struct {
 	repo         *repository.AdminRepository
 	emailService *EmailService
+	s3Client     *internals3.Client
 	cfg          config.AdminConfig
 	jwtGen       *jwt.Generator
 }
@@ -34,10 +39,11 @@ type CreateAdminInviteRequest struct {
 	RoleID   string
 }
 
-func NewAdminService(repo *repository.AdminRepository, emailService *EmailService, cfg config.AdminConfig) *AdminService {
+func NewAdminService(repo *repository.AdminRepository, emailService *EmailService, s3Client *internals3.Client, cfg config.AdminConfig) *AdminService {
 	return &AdminService{
 		repo:         repo,
 		emailService: emailService,
+		s3Client:     s3Client,
 		cfg:          cfg,
 		jwtGen:       jwt.NewGenerator(cfg.JWTSecret, cfg.AccessTTL, cfg.RefreshTTL),
 	}
@@ -690,6 +696,76 @@ func sqlNullString(value string) sql.NullString {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: value, Valid: true}
+}
+
+func (s *AdminService) UpdateAdminProfile(ctx context.Context, actorID, fullName string) (map[string]interface{}, error) {
+	fullName = strings.TrimSpace(fullName)
+	if len(fullName) < 3 {
+		return nil, domain.ErrValidationFailed("Nama lengkap minimal 3 karakter")
+	}
+	if len(fullName) > 150 {
+		return nil, domain.ErrValidationFailed("Nama lengkap maksimal 150 karakter")
+	}
+
+	if err := s.repo.UpdateAdminFullName(ctx, actorID, fullName); err != nil {
+		return nil, fmt.Errorf("failed to update admin profile: %w", err)
+	}
+
+	// Sync personal mailbox display name with admin full name
+	_ = s.repo.SyncPersonalMailboxDisplayName(ctx, actorID, fullName)
+
+	admin, err := s.repo.FindAdminByID(ctx, actorID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get admin: %w", err)
+	}
+	if admin == nil {
+		return nil, domain.NewError("ADMIN_NOT_FOUND", "Akun admin tidak ditemukan", 404)
+	}
+
+	return map[string]interface{}{
+		"message": "Profil berhasil diperbarui",
+		"user":    admin.ToSummary(),
+	}, nil
+}
+
+func (s *AdminService) GetS3File(ctx context.Context, key string) ([]byte, string, error) {
+	if s.s3Client == nil {
+		return nil, "", fmt.Errorf("s3 client not available")
+	}
+	return s.s3Client.GetObjectBytes(ctx, key)
+}
+
+func (s *AdminService) UpdateAdminAvatar(ctx context.Context, actorID string, file *multipart.FileHeader) (string, error) {
+	if s.s3Client == nil {
+		return "", domain.NewError("AVATAR_UPLOAD_DISABLED", "Upload foto profil tidak tersedia", 500)
+	}
+
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+	allowedExts := map[string]bool{".jpg": true, ".jpeg": true, ".png": true, ".webp": true}
+	if !allowedExts[ext] {
+		return "", domain.ErrValidationFailed("Format foto harus JPG, PNG, atau WebP")
+	}
+	if file.Size > 2*1024*1024 {
+		return "", domain.ErrValidationFailed("Ukuran foto maksimal 2MB")
+	}
+
+	avatarKey, err := s.s3Client.UploadFileKey(ctx, file, fmt.Sprintf("admin-avatars/%s", actorID))
+	if err != nil {
+		return "", fmt.Errorf("failed to upload avatar: %w", err)
+	}
+
+	if err := s.repo.UpdateAdminAvatar(ctx, actorID, avatarKey); err != nil {
+		return "", fmt.Errorf("failed to update avatar url: %w", err)
+	}
+
+	return avatarKey, nil
+}
+
+func (s *AdminService) RemoveAdminAvatar(ctx context.Context, actorID string) error {
+	if err := s.repo.ClearAdminAvatar(ctx, actorID); err != nil {
+		return fmt.Errorf("failed to clear avatar: %w", err)
+	}
+	return nil
 }
 
 func firstNonEmpty(values ...string) string {

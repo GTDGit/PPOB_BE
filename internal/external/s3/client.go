@@ -150,6 +150,35 @@ func (c *Client) DeleteFile(ctx context.Context, key string) error {
 	return nil
 }
 
+// UploadFileKey uploads a file to S3 and returns only the S3 object key (not a URL).
+func (c *Client) UploadFileKey(ctx context.Context, file *multipart.FileHeader, folder string) (string, error) {
+	src, err := file.Open()
+	if err != nil {
+		return "", fmt.Errorf("failed to open file: %w", err)
+	}
+	defer src.Close()
+
+	fileBytes, err := io.ReadAll(src)
+	if err != nil {
+		return "", fmt.Errorf("failed to read file: %w", err)
+	}
+
+	ext := filepath.Ext(file.Filename)
+	key := fmt.Sprintf("%s/%s-%d%s", folder, uuid.New().String(), time.Now().Unix(), ext)
+
+	_, err = c.s3Client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:      aws.String(c.bucket),
+		Key:         aws.String(key),
+		Body:        bytes.NewReader(fileBytes),
+		ContentType: aws.String(file.Header.Get("Content-Type")),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to upload to S3: %w", err)
+	}
+
+	return key, nil
+}
+
 // GetPresignedURL generates a presigned URL for temporary access
 func (c *Client) GetPresignedURL(ctx context.Context, key string, expiration time.Duration) (string, error) {
 	// TODO: Implement presigned URL generation

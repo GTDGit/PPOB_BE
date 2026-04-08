@@ -23,6 +23,7 @@ type AdminUser struct {
 	Phone        string         `db:"phone" json:"phone"`
 	FullName     sql.NullString `db:"full_name" json:"-"`
 	PasswordHash sql.NullString `db:"password_hash" json:"-"`
+	AvatarURL    sql.NullString `db:"avatar_url" json:"-"`
 	Status       string         `db:"status" json:"status"`
 	IsActive     bool           `db:"is_active" json:"isActive"`
 	LastLoginAt  sql.NullTime   `db:"last_login_at" json:"-"`
@@ -151,6 +152,7 @@ type AdminUserSummary struct {
 	Email       string   `json:"email"`
 	Phone       string   `json:"phone"`
 	FullName    string   `json:"fullName"`
+	AvatarURL   string   `json:"avatarUrl,omitempty"`
 	Status      string   `json:"status"`
 	IsActive    bool     `json:"isActive"`
 	LastLoginAt *string  `json:"lastLoginAt,omitempty"`
@@ -231,11 +233,17 @@ func (u *AdminUser) ToSummary() *AdminUserSummary {
 		lastLogin = &formatted
 	}
 
+	var avatarURL string
+	if u.AvatarURL.Valid {
+		avatarURL = u.AvatarURL.String
+	}
+
 	return &AdminUserSummary{
 		ID:          u.ID,
 		Email:       u.Email,
 		Phone:       u.Phone,
 		FullName:    u.DisplayName(),
+		AvatarURL:   avatarURL,
 		Status:      u.Status,
 		IsActive:    u.IsActive,
 		LastLoginAt: lastLogin,

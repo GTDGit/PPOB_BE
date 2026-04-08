@@ -674,3 +674,60 @@ func (h *AdminHandler) ListReferenceData(c *gin.Context) {
 	}
 	respondWithSuccess(c, http.StatusOK, resp)
 }
+
+func (h *AdminHandler) UpdateProfile(c *gin.Context) {
+	var req struct {
+		FullName string `json:"fullName" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondWithError(c, domain.ErrValidationFailed("Body request profil tidak valid"))
+		return
+	}
+	resp, err := h.adminService.UpdateAdminProfile(c.Request.Context(), middleware.GetAdminID(c), req.FullName)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	respondWithSuccess(c, http.StatusOK, resp)
+}
+
+func (h *AdminHandler) ServeFile(c *gin.Context) {
+	filePath := c.Param("filepath")
+	if filePath == "" || filePath == "/" {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	// Strip leading slash from wildcard param
+	if filePath[0] == '/' {
+		filePath = filePath[1:]
+	}
+	data, contentType, err := h.adminService.GetS3File(c.Request.Context(), filePath)
+	if err != nil {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	c.Header("Cache-Control", "public, max-age=86400, immutable")
+	c.Data(http.StatusOK, contentType, data)
+}
+
+func (h *AdminHandler) UploadAvatar(c *gin.Context) {
+	file, err := c.FormFile("avatar")
+	if err != nil {
+		respondWithError(c, domain.ErrValidationFailed("File foto profil tidak valid"))
+		return
+	}
+	avatarURL, err := h.adminService.UpdateAdminAvatar(c.Request.Context(), middleware.GetAdminID(c), file)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	respondWithSuccess(c, http.StatusOK, gin.H{"avatarUrl": avatarURL})
+}
+
+func (h *AdminHandler) RemoveAvatar(c *gin.Context) {
+	if err := h.adminService.RemoveAdminAvatar(c.Request.Context(), middleware.GetAdminID(c)); err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	respondWithSuccess(c, http.StatusOK, gin.H{"message": "Foto profil berhasil dihapus"})
+}

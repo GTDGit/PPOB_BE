@@ -177,7 +177,7 @@ func main() {
 	territoryService := service.NewTerritoryService(territoryRepo)
 	kycService := service.NewKYCService(kycRepo, userRepo, gerbangClient, s3Client, cfg.Fallback.KYCEnabled)
 	sandboxService := service.NewSandboxService(historyRepo, balanceRepo, depositRepo, notificationService)
-	adminService := service.NewAdminService(adminRepo, emailService, cfg.Admin)
+	adminService := service.NewAdminService(adminRepo, emailService, s3Client, cfg.Admin)
 	adminMailboxService := service.NewAdminMailboxService(adminRepo, emailService, emailStorageClient, cfg.Email)
 
 	// Initialize handlers
@@ -275,6 +275,7 @@ func main() {
 		{
 			admin.POST("/email/inbound/sns", adminMailboxHandler.InboundSNS)
 			admin.POST("/email/delivery-events/sns", adminMailboxHandler.DeliverySNS)
+			admin.GET("/files/*filepath", adminHandler.ServeFile)
 
 			auth := admin.Group("/auth")
 			{
@@ -348,6 +349,13 @@ func main() {
 				adminProtected.GET("/settings", middleware.AdminRequirePermissions("settings.view"), adminHandler.ListSettings)
 				adminProtected.PUT("/settings", middleware.AdminRequirePermissions("settings.manage"), adminHandler.UpsertSetting)
 				adminProtected.GET("/reference-data", middleware.AdminRequirePermissions("reference.view"), adminHandler.ListReferenceData)
+
+				adminProtected.PATCH("/admins/me/profile", adminHandler.UpdateProfile)
+				adminProtected.POST("/admins/me/avatar", adminHandler.UploadAvatar)
+				adminProtected.DELETE("/admins/me/avatar", adminHandler.RemoveAvatar)
+
+				adminProtected.POST("/email/compose", middleware.AdminRequirePermissions("mailboxes.reply"), adminMailboxHandler.ComposeEmail)
+				adminProtected.PATCH("/mailboxes/:id/display-name", middleware.AdminRequireAnyPermission("mailboxes.manage", "mailboxes.reply"), adminMailboxHandler.UpdateMailboxDisplayName)
 
 				adminProtected.GET("/mailboxes", middleware.AdminRequireAnyPermission("mailboxes.view_assigned", "mailboxes.view_all"), adminMailboxHandler.ListMailboxes)
 				adminProtected.POST("/mailboxes", middleware.AdminRequirePermissions("mailboxes.manage"), adminMailboxHandler.CreateMailbox)

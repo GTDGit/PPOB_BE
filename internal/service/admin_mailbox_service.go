@@ -529,6 +529,211 @@ func (s *AdminMailboxService) ReplyThread(ctx context.Context, adminID, threadID
 	}, nil
 }
 
+type ComposeEmailRequest struct {
+	MailboxID string   `json:"mailboxId"`
+	To        []string `json:"to"`
+	Cc        []string `json:"cc"`
+	Bcc       []string `json:"bcc"`
+	Subject   string   `json:"subject"`
+	Body      string   `json:"body"`
+	HTMLBody  string   `json:"htmlBody"`
+}
+
+func (s *AdminMailboxService) ComposeEmail(ctx context.Context, adminID string, req ComposeEmailRequest) (map[string]interface{}, error) {
+	admin, err := s.requireAdmin(ctx, adminID)
+	if err != nil {
+		return nil, err
+	}
+	if !hasPermission(admin, "mailboxes.reply") {
+		return nil, domain.NewError("ADMIN_FORBIDDEN", "Anda tidak memiliki akses untuk mengirim email", 403)
+	}
+
+	mailbox, err := s.repo.FindMailboxByID(ctx, strings.TrimSpace(req.MailboxID))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get mailbox: %w", err)
+	}
+	if mailbox == nil || !s.canReplyFromMailbox(ctx, admin, mailbox) {
+		return nil, domain.NewError("MAILBOX_FORBIDDEN", "Anda tidak memiliki akses untuk mengirim dari mailbox ini", 403)
+	}
+
+	toAddresses := sanitizeEmailList(req.To)
+	if len(toAddresses) == 0 {
+		return nil, domain.ErrValidationFailed("Minimal satu alamat email penerima harus diisi")
+	}
+	subject := strings.TrimSpace(req.Subject)
+	if subject == "" {
+		return nil, domain.ErrValidationFailed("Subjek email tidak boleh kosong")
+	}
+	body := strings.TrimSpace(req.Body)
+	htmlBody := strings.TrimSpace(req.HTMLBody)
+	if body == "" && htmlBody == "" {
+		return nil, domain.ErrValidationFailed("Isi email tidak boleh kosong")
+	}
+	if htmlBody == "" {
+		htmlBody = fmt.Sprintf("<p style=\"white-space:pre-wrap;line-height:1.6;color:#0f172a;\">%s</p>", strings.ReplaceAll(html.EscapeString(body), "\n", "<br/>"))
+	}
+
+	localHeader := generateMessageHeader(mailbox.Address)
+	preview := buildPreview(firstNonEmpty(body, stripHTML(htmlBody)))
+	now := time.Now()
+	messageID := "aem_" + uuid.New().String()[:8]
+
+	thread := &domain.AdminEmailThread{
+		ID:                "aet_" + uuid.New().String()[:8],
+		MailboxID:         mailbox.ID,
+		ParticipantEmail:  toAddresses[0],
+		Subject:           subject,
+		NormalizedSubject: normalizeEmailSubject(subject),
+		Status:            domain.AdminEmailThreadStatusDibalas,
+		UnreadCount:       0,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+	if err := s.repo.CreateThread(ctx, map[string]interface{}{
+		"id":                 thread.ID,
+		"mailboxId":          thread.MailboxID,
+		"participantName":    nil,
+		"participantEmail":   thread.ParticipantEmail,
+		"subject":            subject,
+		"normalizedSubject":  thread.NormalizedSubject,
+		"status":             thread.Status,
+		"unreadCount":        0,
+		"lastDirection":      domain.AdminEmailDirectionOutbound,
+		"lastMessagePreview": preview,
+		"latestMessageAt":    now,
+		"meta": map[string]interface{}{
+			"mailboxAddress": mailbox.Address,
+			"composed":       true,
+		},
+		"createdAt": now,
+		"updatedAt": now,
+	}); err != nil {
+		return nil, fmt.Errorf("failed to create email thread: %w", err)
+	}
+
+	providerMessageID, err := s.emailService.SendMailboxReply(ctx, MailReplyRequest{
+		Category:         "mailbox_compose",
+		MailboxID:        mailbox.ID,
+		ThreadID:         thread.ID,
+		MessageID:        messageID,
+		FromAddress:      mailbox.Address,
+		FromName:         mailbox.DisplayName,
+		ToAddresses:      toAddresses,
+		CcAddresses:      sanitizeEmailList(req.Cc),
+		BccAddresses:     sanitizeEmailList(req.Bcc),
+		ReplyToAddresses: []string{mailbox.Address},
+		Subject:          subject,
+		HTMLBody:         htmlBody,
+		TextBody:         firstNonEmpty(body, stripHTML(htmlBody)),
+		Headers: map[string]string{
+			"Message-ID": localHeader,
+		},
+		ConfigurationSet: s.emailCfg.SES.ConfigurationSetOperations,
+		Tags: map[string]string{
+			"category": "mailbox_compose",
+			"mailbox":  mailbox.Address,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to send composed email: %w", err)
+	}
+
+	if err := s.repo.CreateEmailMessage(ctx, map[string]interface{}{
+		"id":                messageID,
+		"threadId":          thread.ID,
+		"mailboxId":         mailbox.ID,
+		"direction":         domain.AdminEmailDirectionOutbound,
+		"senderName":        nullableString(mailbox.DisplayName),
+		"senderAddress":     mailbox.Address,
+		"toAddresses":       toAddresses,
+		"ccAddresses":       sanitizeEmailList(req.Cc),
+		"bccAddresses":      sanitizeEmailList(req.Bcc),
+		"subject":           subject,
+		"textBody":          nullableString(firstNonEmpty(body, stripHTML(htmlBody))),
+		"htmlBody":          nullableString(htmlBody),
+		"providerMessageId": nullableString(providerMessageID),
+		"messageIdHeader":   nullableString(localHeader),
+		"sentAt":            now,
+		"adminUserId":       nullableString(admin.ID),
+		"meta": map[string]interface{}{
+			"mailboxAddress": mailbox.Address,
+		},
+		"createdAt": now,
+	}); err != nil {
+		return nil, fmt.Errorf("failed to save composed message: %w", err)
+	}
+
+	if err := s.repo.UpdateThreadAfterOutbound(ctx, thread.ID, preview, now); err != nil {
+		return nil, fmt.Errorf("failed to update thread state: %w", err)
+	}
+	_ = s.repo.AddEmailThreadEvent(ctx, thread.ID, admin.ID, "composed", fmt.Sprintf("Email baru dikirim dari %s", mailbox.Address), map[string]interface{}{
+		"messageId": messageID,
+	})
+	_ = s.repo.CreateEmailDispatchLog(ctx, map[string]interface{}{
+		"id":                "edl_" + uuid.New().String()[:8],
+		"category":          "mailbox_compose",
+		"mailboxId":         mailbox.ID,
+		"threadId":          thread.ID,
+		"messageId":         messageID,
+		"recipient":         toAddresses[0],
+		"senderAddress":     mailbox.Address,
+		"senderName":        mailbox.DisplayName,
+		"provider":          "SMTP",
+		"providerMessageId": nullableString(providerMessageID),
+		"status":            "queued",
+		"metadata": map[string]interface{}{
+			"threadId":    thread.ID,
+			"toAddresses": toAddresses,
+		},
+		"sentAt": now,
+	})
+
+	return map[string]interface{}{
+		"message":           "Email berhasil dikirim",
+		"threadId":          thread.ID,
+		"messageId":         messageID,
+		"providerMessageId": providerMessageID,
+	}, nil
+}
+
+func (s *AdminMailboxService) UpdateMailboxDisplayName(ctx context.Context, actorID, mailboxID, displayName string) (map[string]interface{}, error) {
+	admin, err := s.requireAdmin(ctx, actorID)
+	if err != nil {
+		return nil, err
+	}
+
+	mailbox, err := s.repo.FindMailboxByID(ctx, mailboxID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get mailbox: %w", err)
+	}
+	if mailbox == nil {
+		return nil, domain.NewError("MAILBOX_NOT_FOUND", "Mailbox tidak ditemukan", 404)
+	}
+
+	canEdit := hasPermission(admin, "mailboxes.manage") || isExecutiveAdmin(admin)
+	if !canEdit && mailbox.Type == domain.AdminMailboxTypePersonal && mailbox.OwnerAdminID.Valid && mailbox.OwnerAdminID.String == admin.ID {
+		canEdit = true
+	}
+	if !canEdit {
+		return nil, domain.NewError("ADMIN_FORBIDDEN", "Anda tidak memiliki akses untuk mengubah nama pengirim mailbox ini", 403)
+	}
+
+	displayName = strings.TrimSpace(displayName)
+	if displayName == "" {
+		return nil, domain.ErrValidationFailed("Nama pengirim tidak boleh kosong")
+	}
+	if len(displayName) > 150 {
+		return nil, domain.ErrValidationFailed("Nama pengirim maksimal 150 karakter")
+	}
+
+	mailbox.DisplayName = displayName
+	if err := s.repo.UpdateMailbox(ctx, mailbox); err != nil {
+		return nil, fmt.Errorf("failed to update mailbox display name: %w", err)
+	}
+
+	return s.buildMailboxPayload(ctx, mailbox.ID)
+}
+
 func (s *AdminMailboxService) UpdateThreadStatus(ctx context.Context, adminID, threadID string, req ThreadStatusUpdateRequest) error {
 	admin, err := s.requireAdmin(ctx, adminID)
 	if err != nil {
