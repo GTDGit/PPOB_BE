@@ -1185,16 +1185,17 @@ func (r *AdminRepository) ListServices(ctx context.Context) ([]map[string]interf
 
 func (r *AdminRepository) ListProducts(ctx context.Context, search string, page, perPage int) ([]map[string]interface{}, int, error) {
 	base := ` FROM products p `
-	where, args := buildSearchWhere(search, 1, "p.name", "COALESCE(p.description, '')", "p.service_type", "COALESCE(p.category, '')")
+	where, args := buildSearchWhere(search, 1, "p.name", "COALESCE(p.description, '')", "COALESCE(p.type, '')", "COALESCE(p.category, '')")
 	total, err := r.count(ctx, `SELECT COUNT(*) `+base+where, args...)
 	if err != nil {
 		return nil, 0, err
 	}
 	query := `
 		SELECT
-			p.id, p.service_type, p.name, COALESCE(p.description, '') AS description,
-			COALESCE(p.category, '') AS category, p.nominal, p.price, p.admin_fee,
-			p.status, p.stock, p.sort_order, p.created_at, p.updated_at
+			p.id, p.sku_code, p.name, COALESCE(p.description, '') AS description,
+			COALESCE(p.type, '') AS type, COALESCE(p.category, '') AS category,
+			COALESCE(p.brand, '') AS brand, p.price, p.admin AS admin_fee,
+			p.commission, p.is_active, p.created_at, p.updated_at
 	` + base + where + `
 		ORDER BY p.updated_at DESC
 		LIMIT $` + fmt.Sprintf("%d", len(args)+1) + ` OFFSET $` + fmt.Sprintf("%d", len(args)+2)
@@ -1204,7 +1205,7 @@ func (r *AdminRepository) ListProducts(ctx context.Context, search string, page,
 
 func (r *AdminRepository) FindProductByID(ctx context.Context, productID string) (map[string]interface{}, error) {
 	items, err := r.selectMaps(ctx, `
-		SELECT id, name, service_type, price, admin_fee, status
+		SELECT id, sku_code, name, COALESCE(type, '') AS type, price, admin AS admin_fee, is_active
 		FROM products
 		WHERE id = $1 LIMIT 1
 	`, productID)
