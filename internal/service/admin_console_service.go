@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"mime/multipart"
 	"strings"
 	"time"
 
@@ -417,6 +418,21 @@ func (s *AdminService) UpdateCatalogService(ctx context.Context, actorID, servic
 	}
 	_ = s.logAudit(ctx, actorID, "service.update", "service", serviceID, nil, payload, "", "", "success", nil)
 	return nil
+}
+
+func (s *AdminService) UploadServiceIcon(ctx context.Context, actorID, serviceID string, file *multipart.FileHeader) (string, error) {
+	if s.publicS3 == nil {
+		return "", domain.NewError("UPLOAD_DISABLED", "Public S3 not configured", 500)
+	}
+	iconURL, err := s.publicS3.UploadFile(ctx, file, fmt.Sprintf("services/%s", serviceID))
+	if err != nil {
+		return "", fmt.Errorf("failed to upload service icon: %w", err)
+	}
+	if err := s.repo.UpdateServiceIconURL(ctx, serviceID, iconURL); err != nil {
+		return "", fmt.Errorf("failed to update icon url: %w", err)
+	}
+	_ = s.logAudit(ctx, actorID, "service.upload_icon", "service", serviceID, nil, map[string]interface{}{"iconUrl": iconURL}, "", "", "success", nil)
+	return iconURL, nil
 }
 
 func (s *AdminService) ListNotifications(ctx context.Context, search string, page, perPage int) (*domain.AdminListResponse, error) {

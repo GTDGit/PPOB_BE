@@ -754,3 +754,17 @@ func (h *AdminHandler) UpdateCatalogService(c *gin.Context) {
 	}
 	respondWithSuccess(c, http.StatusOK, gin.H{"message": "Layanan berhasil diperbarui"})
 }
+
+func (h *AdminHandler) UploadServiceIcon(c *gin.Context) {
+	file, err := c.FormFile("icon")
+	if err != nil {
+		respondWithError(c, domain.ErrValidationFailed("File icon tidak valid"))
+		return
+	}
+	iconURL, err := h.adminService.UploadServiceIcon(c.Request.Context(), middleware.GetAdminID(c), c.Param("id"), file)
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	respondWithSuccess(c, http.StatusOK, gin.H{"iconUrl": iconURL})
+}

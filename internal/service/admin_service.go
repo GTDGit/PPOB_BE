@@ -28,6 +28,7 @@ type AdminService struct {
 	repo         *repository.AdminRepository
 	emailService *EmailService
 	s3Client     *internals3.Client
+	publicS3     *internals3.Client
 	cfg          config.AdminConfig
 	jwtGen       *jwt.Generator
 }
@@ -39,11 +40,12 @@ type CreateAdminInviteRequest struct {
 	RoleID   string
 }
 
-func NewAdminService(repo *repository.AdminRepository, emailService *EmailService, s3Client *internals3.Client, cfg config.AdminConfig) *AdminService {
+func NewAdminService(repo *repository.AdminRepository, emailService *EmailService, s3Client, publicS3 *internals3.Client, cfg config.AdminConfig) *AdminService {
 	return &AdminService{
 		repo:         repo,
 		emailService: emailService,
 		s3Client:     s3Client,
+		publicS3:     publicS3,
 		cfg:          cfg,
 		jwtGen:       jwt.NewGenerator(cfg.JWTSecret, cfg.AccessTTL, cfg.RefreshTTL),
 	}

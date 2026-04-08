@@ -21,6 +21,7 @@ type Config struct {
 	Firebase      FirebaseConfig
 	Gerbang       GerbangConfig
 	S3            S3Config
+	S3Public      S3Config
 	Fallback      FallbackConfig
 	ProductSync   ProductSyncConfig
 	BankCodeSync  BankCodeSyncConfig
@@ -344,6 +345,13 @@ func Load() (*Config, error) {
 			AccessKey: getEnvRequired("S3_ACCESS_KEY"),
 			SecretKey: getEnvRequired("S3_SECRET_KEY"),
 			BaseURL:   getEnv("S3_BASE_URL", ""),
+		},
+		S3Public: S3Config{
+			Bucket:    getEnv("S3_PUBLIC_BUCKET", "ppob-app"),
+			Region:    getEnv("S3_REGION", "ap-southeast-3"),
+			AccessKey: getEnvRequired("S3_ACCESS_KEY"),
+			SecretKey: getEnvRequired("S3_SECRET_KEY"),
+			BaseURL:   getEnv("S3_PUBLIC_BASE_URL", "https://s3.ap-southeast-3.amazonaws.com/ppob-app"),
 		},
 		TerritorySync: TerritorySyncConfig{
 			Interval:      time.Duration(getEnvAsInt("TERRITORY_SYNC_INTERVAL_DAYS", 30)) * 24 * time.Hour,

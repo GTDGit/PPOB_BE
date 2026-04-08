@@ -99,6 +99,18 @@ func main() {
 		log.Fatalf("Failed to initialize S3 client: %v", err)
 	}
 
+	// Initialize public S3 client for app assets (service icons, etc.)
+	publicS3Client, err := s3.NewClient(s3.Config{
+		Region:          cfg.S3Public.Region,
+		Bucket:          cfg.S3Public.Bucket,
+		AccessKeyID:     cfg.S3Public.AccessKey,
+		SecretAccessKey: cfg.S3Public.SecretKey,
+		PublicURL:       cfg.S3Public.BaseURL,
+	})
+	if err != nil {
+		log.Fatalf("Failed to initialize public S3 client: %v", err)
+	}
+
 	var emailStorageClient *s3.Client
 	if cfg.Email.SES.InboundBucket != "" {
 		// Use main S3 credentials for inbound bucket (needs s3:ListBucket + s3:GetObject)
@@ -179,7 +191,7 @@ func main() {
 	territoryService := service.NewTerritoryService(territoryRepo)
 	kycService := service.NewKYCService(kycRepo, userRepo, gerbangClient, s3Client, cfg.Fallback.KYCEnabled)
 	sandboxService := service.NewSandboxService(historyRepo, balanceRepo, depositRepo, notificationService)
-	adminService := service.NewAdminService(adminRepo, emailService, s3Client, cfg.Admin)
+	adminService := service.NewAdminService(adminRepo, emailService, s3Client, publicS3Client, cfg.Admin)
 	positionService := service.NewPositionService(positionRepo, adminRepo)
 	adminMailboxService := service.NewAdminMailboxService(adminRepo, emailService, emailStorageClient, cfg.Email)
 
@@ -346,6 +358,7 @@ func main() {
 
 				adminProtected.GET("/catalog/services", middleware.AdminRequirePermissions("catalog.view"), adminHandler.ListCatalogServices)
 				adminProtected.PATCH("/catalog/services/:id", middleware.AdminRequirePermissions("catalog.view"), adminHandler.UpdateCatalogService)
+				adminProtected.POST("/catalog/services/:id/icon", middleware.AdminRequirePermissions("catalog.view"), adminHandler.UploadServiceIcon)
 
 				adminProtected.GET("/notifications", middleware.AdminRequirePermissions("notifications.view"), adminHandler.ListNotifications)
 				adminProtected.POST("/notifications/broadcast", middleware.AdminRequirePermissions("notifications.manage"), adminHandler.BroadcastNotification)

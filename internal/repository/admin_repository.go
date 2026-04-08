@@ -1199,6 +1199,11 @@ func (r *AdminRepository) UpdateService(ctx context.Context, serviceID string, p
 	return err
 }
 
+func (r *AdminRepository) UpdateServiceIconURL(ctx context.Context, serviceID, iconURL string) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE services SET icon_url = $2, updated_at = NOW() WHERE id = $1`, serviceID, iconURL)
+	return err
+}
+
 func (r *AdminRepository) ListProducts(ctx context.Context, search string, page, perPage int) ([]map[string]interface{}, int, error) {
 	base := ` FROM products p `
 	where, args := buildSearchWhere(search, 1, "p.name", "COALESCE(p.description, '')", "COALESCE(p.type, '')", "COALESCE(p.category, '')")
