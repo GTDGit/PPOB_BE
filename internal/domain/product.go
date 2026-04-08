@@ -42,32 +42,36 @@ const (
 
 // Operator represents mobile operator (Telkomsel, Indosat, etc)
 type Operator struct {
-	ID       string   `json:"id"`
-	Name     string   `json:"name"`
-	Prefixes []string `json:"prefixes"`
-	Icon     string   `json:"icon"`
-	IconURL  string   `json:"iconUrl"`
-	Status   string   `json:"status"`
+	ID         string   `db:"id" json:"id"`
+	Name       string   `db:"name" json:"name"`
+	PrefixesDB string   `db:"prefixes" json:"-"`       // JSON text from DB
+	Prefixes   []string `db:"-" json:"prefixes"`        // Parsed for API response
+	Icon       string   `db:"icon" json:"icon"`
+	IconURL    string   `db:"icon_url" json:"iconUrl"`
+	Status     string   `db:"status" json:"status"`
+	SortOrder  int      `db:"sort_order" json:"-"`
 }
 
 // EwalletProvider represents e-wallet provider (GoPay, OVO, etc)
 type EwalletProvider struct {
-	ID               string `json:"id"`
-	Name             string `json:"name"`
-	Icon             string `json:"icon"`
-	IconURL          string `json:"iconUrl"`
-	InputLabel       string `json:"inputLabel"`
-	InputPlaceholder string `json:"inputPlaceholder"`
-	InputType        string `json:"inputType"`
-	Status           string `json:"status"`
+	ID               string `db:"id" json:"id"`
+	Name             string `db:"name" json:"name"`
+	Icon             string `db:"icon" json:"icon"`
+	IconURL          string `db:"icon_url" json:"iconUrl"`
+	InputLabel       string `db:"input_label" json:"inputLabel"`
+	InputPlaceholder string `db:"input_placeholder" json:"inputPlaceholder"`
+	InputType        string `db:"input_type" json:"inputType"`
+	Status           string `db:"status" json:"status"`
+	SortOrder        int    `db:"sort_order" json:"-"`
 }
 
 // PDAMRegion represents PDAM region
 type PDAMRegion struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Province string `json:"province"`
-	Status   string `json:"status"`
+	ID        string `db:"id" json:"id"`
+	Name      string `db:"name" json:"name"`
+	Province  string `db:"province" json:"province"`
+	Status    string `db:"status" json:"status"`
+	SortOrder int    `db:"sort_order" json:"-"`
 }
 
 // Bank represents bank information (synced from Gerbang API)
@@ -89,12 +93,13 @@ type Bank struct {
 
 // TVProvider represents TV cable provider
 type TVProvider struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Icon       string `json:"icon"`
-	IconURL    string `json:"iconUrl"`
-	InputLabel string `json:"inputLabel"`
-	Status     string `json:"status"`
+	ID         string `db:"id" json:"id"`
+	Name       string `db:"name" json:"name"`
+	Icon       string `db:"icon" json:"icon"`
+	IconURL    string `db:"icon_url" json:"iconUrl"`
+	InputLabel string `db:"input_label" json:"inputLabel"`
+	Status     string `db:"status" json:"status"`
+	SortOrder  int    `db:"sort_order" json:"-"`
 }
 
 // Product status

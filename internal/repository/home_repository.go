@@ -1,7 +1,14 @@
 package repository
 
 import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
+
+	"github.com/jmoiron/sqlx"
 
 	"github.com/GTDGit/PPOB_BE/internal/domain"
 )
@@ -9,429 +16,286 @@ import (
 // HomeRepository defines the interface for home screen data operations
 type HomeRepository interface {
 	// Services
-	GetServicesVersion() string
-	GetFeaturedServices() []*domain.ServiceMenu
-	GetServiceCategories() []*domain.ServiceCategory
-	GetAllServices() (*domain.ServicesResponse, error)
+	GetServicesVersion(ctx context.Context) string
+	GetFeaturedServices(ctx context.Context) []*domain.ServiceMenu
+	GetServiceCategories(ctx context.Context) []*domain.ServiceCategory
+	GetAllServices(ctx context.Context) (*domain.ServicesResponse, error)
 
 	// Banners
-	GetBannersVersion() string
-	GetBanners(placement string, userTier string) []*domain.Banner
+	GetBannersVersion(ctx context.Context) string
+	GetBanners(ctx context.Context, placement string, userTier string) []*domain.Banner
 }
 
 // homeRepository implements HomeRepository
-type homeRepository struct{}
-
-// NewHomeRepository creates a new home repository
-func NewHomeRepository() HomeRepository {
-	return &homeRepository{}
+type homeRepository struct {
+	db *sqlx.DB
 }
 
-// GetServicesVersion returns current services version
-func (r *homeRepository) GetServicesVersion() string {
-	// Format: YYYYMMDDHH (Year-Month-Day-Hour)
-	return time.Now().Format("2006010215")
+// NewHomeRepository creates a new home repository
+func NewHomeRepository(db *sqlx.DB) HomeRepository {
+	return &homeRepository{db: db}
+}
+
+// ========== Service DB row types ==========
+
+type serviceRow struct {
+	ID         string  `db:"id"`
+	CategoryID *string `db:"category_id"`
+	Name       string  `db:"name"`
+	Icon       string  `db:"icon"`
+	IconURL    *string `db:"icon_url"`
+	Route      string  `db:"route"`
+	Status     string  `db:"status"`
+	Badge      *string `db:"badge"`
+	IsFeatured bool    `db:"is_featured"`
+	SortOrder  int     `db:"sort_order"`
+}
+
+type serviceCategoryRow struct {
+	ID        string `db:"id"`
+	Name      string `db:"name"`
+	Slug      string `db:"slug"`
+	SortOrder int    `db:"sort_order"`
+	IsActive  bool   `db:"is_active"`
+}
+
+type bannerRow struct {
+	ID              string    `db:"id"`
+	Title           string    `db:"title"`
+	Subtitle        *string   `db:"subtitle"`
+	ImageURL        string    `db:"image_url"`
+	ThumbnailURL    *string   `db:"thumbnail_url"`
+	ActionType      *string   `db:"action_type"`
+	ActionValue     *string   `db:"action_value"`
+	BackgroundColor *string   `db:"background_color"`
+	TextColor       *string   `db:"text_color"`
+	Placement       string    `db:"placement"`
+	StartDate       time.Time `db:"start_date"`
+	EndDate         time.Time `db:"end_date"`
+	Priority        int       `db:"priority"`
+	TargetTiers     *string   `db:"target_tiers"`
+	IsNewUserOnly   bool      `db:"is_new_user_only"`
+	IsActive        bool      `db:"is_active"`
+}
+
+// ========== Services ==========
+
+// GetServicesVersion returns current services version based on last update
+func (r *homeRepository) GetServicesVersion(ctx context.Context) string {
+	var lastUpdated sql.NullTime
+	err := r.db.GetContext(ctx, &lastUpdated, `SELECT MAX(updated_at) FROM services`)
+	if err != nil || !lastUpdated.Valid {
+		return time.Now().Format("2006010215")
+	}
+	return lastUpdated.Time.Format("2006010215")
 }
 
 // GetFeaturedServices returns featured services for home screen
-func (r *homeRepository) GetFeaturedServices() []*domain.ServiceMenu {
-	return []*domain.ServiceMenu{
-		{
-			ID:       "pulsa",
-			Name:     "Pulsa",
-			Icon:     "pulsa",
-			IconURL:  "https://cdn.ppob.id/icons/pulsa.png",
-			Route:    "/services/pulsa",
-			Status:   domain.ServiceStatusActive,
-			Category: "prepaid",
-			Position: 1,
-		},
-		{
-			ID:       "paket_data",
-			Name:     "Paket Data",
-			Icon:     "paket_data",
-			IconURL:  "https://cdn.ppob.id/icons/paket-data.png",
-			Route:    "/services/paket-data",
-			Status:   domain.ServiceStatusActive,
-			Category: "prepaid",
-			Position: 2,
-		},
-		{
-			ID:       "token_pln",
-			Name:     "Token PLN",
-			Icon:     "token_pln",
-			IconURL:  "https://cdn.ppob.id/icons/token-pln.png",
-			Route:    "/services/token-pln",
-			Status:   domain.ServiceStatusActive,
-			Category: "prepaid",
-			Position: 3,
-		},
-		{
-			ID:       "tagihan_pln",
-			Name:     "Tagihan PLN",
-			Icon:     "tagihan_pln",
-			IconURL:  "https://cdn.ppob.id/icons/tagihan-pln.png",
-			Route:    "/services/tagihan-pln",
-			Status:   domain.ServiceStatusActive,
-			Category: "postpaid",
-			Position: 4,
-		},
-		{
-			ID:       "pdam",
-			Name:     "PDAM",
-			Icon:     "pdam",
-			IconURL:  "https://cdn.ppob.id/icons/pdam.png",
-			Route:    "/services/pdam",
-			Status:   domain.ServiceStatusActive,
-			Category: "postpaid",
-			Position: 5,
-		},
-		{
-			ID:       "ewallet",
-			Name:     "E-Wallet",
-			Icon:     "ewallet",
-			IconURL:  "https://cdn.ppob.id/icons/ewallet.png",
-			Route:    "/services/ewallet",
-			Status:   domain.ServiceStatusActive,
-			Category: "finance",
-			Position: 6,
-		},
-		{
-			ID:       "transfer_bank",
-			Name:     "Transfer Bank",
-			Icon:     "transfer_bank",
-			IconURL:  "https://cdn.ppob.id/icons/transfer-bank.png",
-			Route:    "/services/transfer-bank",
-			Status:   domain.ServiceStatusActive,
-			Category: "finance",
-			Position: 7,
-		},
-		{
-			ID:       "voucher_game",
-			Name:     "Voucher Game",
-			Icon:     "voucher_game",
-			IconURL:  "https://cdn.ppob.id/icons/voucher-game.png",
-			Route:    "/services/voucher-game",
-			Status:   domain.ServiceStatusActive,
-			Category: "prepaid",
-			Position: 8,
-		},
-		{
-			ID:       "bpjs",
-			Name:     "BPJS",
-			Icon:     "bpjs",
-			IconURL:  "https://cdn.ppob.id/icons/bpjs.png",
-			Route:    "/services/bpjs",
-			Status:   domain.ServiceStatusActive,
-			Category: "postpaid",
-			Position: 9,
-		},
-		{
-			ID:       "telkom",
-			Name:     "Telkom",
-			Icon:     "telkom",
-			IconURL:  "https://cdn.ppob.id/icons/telkom.png",
-			Route:    "/services/telkom",
-			Status:   domain.ServiceStatusActive,
-			Category: "postpaid",
-			Position: 10,
-		},
+func (r *homeRepository) GetFeaturedServices(ctx context.Context) []*domain.ServiceMenu {
+	query := `
+		SELECT s.id, s.category_id, s.name, s.icon, s.icon_url, s.route,
+		       s.status, s.badge, s.is_featured, s.sort_order
+		FROM services s
+		WHERE s.is_featured = true AND s.status != 'hidden'
+		ORDER BY s.sort_order ASC
+	`
+
+	var rows []serviceRow
+	if err := r.db.SelectContext(ctx, &rows, query); err != nil {
+		return []*domain.ServiceMenu{}
 	}
+
+	return r.serviceRowsToMenus(rows)
 }
 
-// GetServiceCategories returns service categories with services
-func (r *homeRepository) GetServiceCategories() []*domain.ServiceCategory {
-	promoBadge := domain.BadgePromo
-
-	return []*domain.ServiceCategory{
-		{
-			ID:    "prepaid",
-			Name:  "Pra Bayar",
-			Order: 1,
-			Services: []*domain.ServiceMenu{
-				{
-					ID:       "pulsa",
-					Name:     "Pulsa",
-					Icon:     "pulsa",
-					IconURL:  "https://cdn.ppob.id/icons/pulsa.png",
-					Route:    "/services/pulsa",
-					Status:   domain.ServiceStatusActive,
-					Position: 1,
-				},
-				{
-					ID:       "paket_data",
-					Name:     "Paket Data",
-					Icon:     "paket_data",
-					IconURL:  "https://cdn.ppob.id/icons/paket-data.png",
-					Route:    "/services/paket-data",
-					Status:   domain.ServiceStatusActive,
-					Badge:    &promoBadge,
-					Position: 2,
-				},
-				{
-					ID:       "token_pln",
-					Name:     "Token PLN",
-					Icon:     "token_pln",
-					IconURL:  "https://cdn.ppob.id/icons/token-pln.png",
-					Route:    "/services/token-pln",
-					Status:   domain.ServiceStatusActive,
-					Position: 3,
-				},
-				{
-					ID:       "voucher_game",
-					Name:     "Voucher Game",
-					Icon:     "voucher_game",
-					IconURL:  "https://cdn.ppob.id/icons/voucher-game.png",
-					Route:    "/services/voucher-game",
-					Status:   domain.ServiceStatusActive,
-					Position: 4,
-				},
-			},
-		},
-		{
-			ID:    "postpaid",
-			Name:  "Pasca Bayar",
-			Order: 2,
-			Services: []*domain.ServiceMenu{
-				{
-					ID:       "pulsa_pascabayar",
-					Name:     "Pulsa Pascabayar",
-					Icon:     "pulsa_pascabayar",
-					IconURL:  "https://cdn.ppob.id/icons/pulsa-pascabayar.png",
-					Route:    "/services/pulsa-pascabayar",
-					Status:   domain.ServiceStatusActive,
-					Position: 1,
-				},
-				{
-					ID:       "pdam",
-					Name:     "PDAM",
-					Icon:     "pdam",
-					IconURL:  "https://cdn.ppob.id/icons/pdam.png",
-					Route:    "/services/pdam",
-					Status:   domain.ServiceStatusActive,
-					Position: 2,
-				},
-				{
-					ID:       "tagihan_pln",
-					Name:     "Tagihan PLN",
-					Icon:     "tagihan_pln",
-					IconURL:  "https://cdn.ppob.id/icons/tagihan-pln.png",
-					Route:    "/services/tagihan-pln",
-					Status:   domain.ServiceStatusActive,
-					Position: 3,
-				},
-				{
-					ID:       "bpjs",
-					Name:     "BPJS",
-					Icon:     "bpjs",
-					IconURL:  "https://cdn.ppob.id/icons/bpjs.png",
-					Route:    "/services/bpjs",
-					Status:   domain.ServiceStatusActive,
-					Position: 4,
-				},
-				{
-					ID:       "telkom",
-					Name:     "Telkom",
-					Icon:     "telkom",
-					IconURL:  "https://cdn.ppob.id/icons/telkom.png",
-					Route:    "/services/telkom",
-					Status:   domain.ServiceStatusActive,
-					Position: 5,
-				},
-				{
-					ID:       "tagihan_gas",
-					Name:     "Tagihan Gas",
-					Icon:     "tagihan_gas",
-					IconURL:  "https://cdn.ppob.id/icons/tagihan-gas.png",
-					Route:    "/services/tagihan-gas",
-					Status:   domain.ServiceStatusActive,
-					Position: 6,
-				},
-				{
-					ID:       "pbb",
-					Name:     "PBB",
-					Icon:     "pbb",
-					IconURL:  "https://cdn.ppob.id/icons/pbb.png",
-					Route:    "/services/pbb",
-					Status:   domain.ServiceStatusActive,
-					Position: 7,
-				},
-				{
-					ID:       "tv_kabel",
-					Name:     "TV Kabel",
-					Icon:     "tv_kabel",
-					IconURL:  "https://cdn.ppob.id/icons/tv-kabel.png",
-					Route:    "/services/tv-kabel",
-					Status:   domain.ServiceStatusActive,
-					Position: 8,
-				},
-			},
-		},
-		{
-			ID:    "finance",
-			Name:  "Keuangan",
-			Order: 3,
-			Services: []*domain.ServiceMenu{
-				{
-					ID:       "ewallet",
-					Name:     "Topup E-Wallet",
-					Icon:     "ewallet",
-					IconURL:  "https://cdn.ppob.id/icons/ewallet.png",
-					Route:    "/services/ewallet",
-					Status:   domain.ServiceStatusActive,
-					Position: 1,
-				},
-				{
-					ID:       "transfer_bank",
-					Name:     "Transfer Bank",
-					Icon:     "transfer_bank",
-					IconURL:  "https://cdn.ppob.id/icons/transfer-bank.png",
-					Route:    "/services/transfer-bank",
-					Status:   domain.ServiceStatusActive,
-					Position: 2,
-				},
-			},
-		},
+// GetServiceCategories returns service categories with their services
+func (r *homeRepository) GetServiceCategories(ctx context.Context) []*domain.ServiceCategory {
+	// Get active categories
+	catQuery := `
+		SELECT id, name, slug, sort_order, is_active
+		FROM service_categories
+		WHERE is_active = true
+		ORDER BY sort_order ASC
+	`
+	var catRows []serviceCategoryRow
+	if err := r.db.SelectContext(ctx, &catRows, catQuery); err != nil {
+		return []*domain.ServiceCategory{}
 	}
+
+	// Get all visible services
+	svcQuery := `
+		SELECT id, category_id, name, icon, icon_url, route, status, badge, is_featured, sort_order
+		FROM services
+		WHERE status != 'hidden'
+		ORDER BY sort_order ASC
+	`
+	var svcRows []serviceRow
+	if err := r.db.SelectContext(ctx, &svcRows, svcQuery); err != nil {
+		return []*domain.ServiceCategory{}
+	}
+
+	// Group services by category_id
+	svcByCat := make(map[string][]serviceRow)
+	for _, s := range svcRows {
+		catID := ""
+		if s.CategoryID != nil {
+			catID = *s.CategoryID
+		}
+		svcByCat[catID] = append(svcByCat[catID], s)
+	}
+
+	// Build category response
+	var categories []*domain.ServiceCategory
+	for _, cat := range catRows {
+		services := r.serviceRowsToMenus(svcByCat[cat.ID])
+		if len(services) == 0 {
+			continue
+		}
+		categories = append(categories, &domain.ServiceCategory{
+			ID:       cat.ID,
+			Name:     cat.Name,
+			Order:    cat.SortOrder,
+			Services: services,
+		})
+	}
+
+	return categories
 }
 
 // GetAllServices returns all services with version
-func (r *homeRepository) GetAllServices() (*domain.ServicesResponse, error) {
+func (r *homeRepository) GetAllServices(ctx context.Context) (*domain.ServicesResponse, error) {
 	return &domain.ServicesResponse{
-		Version:    r.GetServicesVersion(),
-		Featured:   r.GetFeaturedServices(),
-		Categories: r.GetServiceCategories(),
+		Version:    r.GetServicesVersion(ctx),
+		Featured:   r.GetFeaturedServices(ctx),
+		Categories: r.GetServiceCategories(ctx),
 	}, nil
 }
 
-// GetBannersVersion returns current banners version
-func (r *homeRepository) GetBannersVersion() string {
-	// Format: YYYYMMDDHH
-	return time.Now().Format("2006010215")
+// ========== Banners ==========
+
+// GetBannersVersion returns current banners version based on last update
+func (r *homeRepository) GetBannersVersion(ctx context.Context) string {
+	var lastUpdated sql.NullTime
+	err := r.db.GetContext(ctx, &lastUpdated, `SELECT MAX(updated_at) FROM banners WHERE is_active = true`)
+	if err != nil || !lastUpdated.Valid {
+		return time.Now().Format("2006010215")
+	}
+	return lastUpdated.Time.Format("2006010215")
 }
 
 // GetBanners returns active banners filtered by placement and user tier
-func (r *homeRepository) GetBanners(placement string, userTier string) []*domain.Banner {
-	now := time.Now()
+func (r *homeRepository) GetBanners(ctx context.Context, placement string, userTier string) []*domain.Banner {
+	query := `
+		SELECT id, title, subtitle, image_url, thumbnail_url,
+		       action_type, action_value, background_color, text_color,
+		       placement, start_date, end_date, priority,
+		       target_tiers, is_new_user_only, is_active
+		FROM banners
+		WHERE is_active = true
+		  AND start_date <= NOW()
+		  AND end_date >= NOW()
+	`
+	args := []interface{}{}
+	argIdx := 1
 
-	// All mock banners
-	allBanners := []*domain.Banner{
-		{
-			ID:           "banner_001",
-			Title:        "Top Up Game & Pulsa Murah",
-			Subtitle:     strPtr("Diskon hingga 10%"),
-			ImageURL:     "https://cdn.ppob.id/banners/promo-game-jan.png",
-			ThumbnailURL: strPtr("https://cdn.ppob.id/banners/promo-game-jan-thumb.png"),
-			Action: &domain.BannerAction{
-				Type:  domain.ActionTypeDeeplink,
-				Value: "/services/voucher-game",
-			},
-			BackgroundColor: "#1E3A8A",
-			TextColor:       strPtr("#FFFFFF"),
-			StartDate:       time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-			EndDate:         time.Date(2026, 12, 31, 23, 59, 59, 0, time.UTC),
-			Priority:        1,
-			Placement:       domain.PlacementHome,
-			TargetAudience: &domain.Audience{
-				Tiers: []string{"BRONZE", "SILVER", "GOLD", "PLATINUM"},
-			},
-		},
-		{
-			ID:           "banner_002",
-			Title:        "Cashback Token PLN",
-			Subtitle:     strPtr("Cashback 5% max 10rb"),
-			ImageURL:     "https://cdn.ppob.id/banners/promo-pln-jan.png",
-			ThumbnailURL: strPtr("https://cdn.ppob.id/banners/promo-pln-jan-thumb.png"),
-			Action: &domain.BannerAction{
-				Type:  domain.ActionTypeDeeplink,
-				Value: "/services/token-pln",
-			},
-			BackgroundColor: "#047857",
-			TextColor:       strPtr("#FFFFFF"),
-			StartDate:       time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC),
-			EndDate:         time.Date(2026, 12, 31, 23, 59, 59, 0, time.UTC),
-			Priority:        2,
-			Placement:       domain.PlacementHome,
-			TargetAudience: &domain.Audience{
-				Tiers: []string{"SILVER", "GOLD", "PLATINUM"},
-			},
-		},
-		{
-			ID:           "banner_003",
-			Title:        "Ajak Teman Dapat Bonus",
-			Subtitle:     strPtr("Bonus Rp10.000 per referral"),
-			ImageURL:     "https://cdn.ppob.id/banners/referral-program.png",
-			ThumbnailURL: strPtr("https://cdn.ppob.id/banners/referral-program-thumb.png"),
-			Action: &domain.BannerAction{
-				Type:  domain.ActionTypeDeeplink,
-				Value: "/referral",
-			},
-			BackgroundColor: "#7C3AED",
-			TextColor:       strPtr("#FFFFFF"),
-			StartDate:       time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-			EndDate:         time.Date(2026, 12, 31, 23, 59, 59, 0, time.UTC),
-			Priority:        3,
-			Placement:       domain.PlacementHome,
-			TargetAudience: &domain.Audience{
-				Tiers: []string{"BRONZE", "SILVER", "GOLD", "PLATINUM"},
-			},
-		},
-		{
-			ID:           "banner_004",
-			Title:        "Promo Transfer Bank Gratis",
-			Subtitle:     strPtr("Gratis admin untuk transaksi pertama"),
-			ImageURL:     "https://cdn.ppob.id/banners/promo-transfer.png",
-			ThumbnailURL: strPtr("https://cdn.ppob.id/banners/promo-transfer-thumb.png"),
-			Action: &domain.BannerAction{
-				Type:  domain.ActionTypeDeeplink,
-				Value: "/services/transfer-bank",
-			},
-			BackgroundColor: "#DC2626",
-			TextColor:       strPtr("#FFFFFF"),
-			StartDate:       time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-			EndDate:         time.Date(2026, 12, 31, 23, 59, 59, 0, time.UTC),
-			Priority:        1,
-			Placement:       domain.PlacementServices,
-			TargetAudience: &domain.Audience{
-				Tiers: []string{"BRONZE", "SILVER", "GOLD", "PLATINUM"},
-			},
-		},
+	if placement != "" {
+		query += fmt.Sprintf(" AND placement = $%d", argIdx)
+		args = append(args, placement)
+		argIdx++
 	}
 
-	// Filter by placement and active date
-	var filteredBanners []*domain.Banner
-	for _, banner := range allBanners {
-		// Check placement (if specified)
-		if placement != "" && banner.Placement != placement {
-			continue
-		}
+	query += " ORDER BY priority ASC"
 
-		// Check if banner is active (current time is between start and end date)
-		if now.Before(banner.StartDate) || now.After(banner.EndDate) {
-			continue
-		}
+	var rows []bannerRow
+	if err := r.db.SelectContext(ctx, &rows, query, args...); err != nil {
+		return []*domain.Banner{}
+	}
 
-		// Check user tier targeting
-		if banner.TargetAudience != nil && len(banner.TargetAudience.Tiers) > 0 {
-			tierMatch := false
-			for _, tier := range banner.TargetAudience.Tiers {
-				if tier == userTier {
-					tierMatch = true
-					break
+	// Filter by user tier in Go (target_tiers is stored as JSON text)
+	var banners []*domain.Banner
+	for _, row := range rows {
+		// Check tier targeting
+		if row.TargetTiers != nil && *row.TargetTiers != "" {
+			var tiers []string
+			if err := json.Unmarshal([]byte(*row.TargetTiers), &tiers); err == nil && len(tiers) > 0 {
+				tierMatch := false
+				for _, t := range tiers {
+					if strings.EqualFold(t, userTier) {
+						tierMatch = true
+						break
+					}
+				}
+				if !tierMatch {
+					continue
 				}
 			}
-			if !tierMatch {
-				continue
+		}
+
+		banner := &domain.Banner{
+			ID:              row.ID,
+			Title:           row.Title,
+			Subtitle:        row.Subtitle,
+			ImageURL:        row.ImageURL,
+			ThumbnailURL:    row.ThumbnailURL,
+			BackgroundColor: derefStr(row.BackgroundColor, ""),
+			TextColor:       row.TextColor,
+			StartDate:       row.StartDate,
+			EndDate:         row.EndDate,
+			Priority:        row.Priority,
+			Placement:       row.Placement,
+		}
+
+		// Build action
+		if row.ActionType != nil && *row.ActionType != "" && *row.ActionType != "none" {
+			banner.Action = &domain.BannerAction{
+				Type:  *row.ActionType,
+				Value: derefStr(row.ActionValue, ""),
 			}
 		}
 
-		filteredBanners = append(filteredBanners, banner)
+		// Build audience
+		if row.TargetTiers != nil && *row.TargetTiers != "" {
+			var tiers []string
+			json.Unmarshal([]byte(*row.TargetTiers), &tiers)
+			if len(tiers) > 0 {
+				banner.TargetAudience = &domain.Audience{
+					Tiers: tiers,
+				}
+			}
+		}
+
+		banners = append(banners, banner)
 	}
 
-	return filteredBanners
+	return banners
 }
 
-// Helper function to create string pointer
-func strPtr(s string) *string {
-	return &s
+// ========== Helpers ==========
+
+func (r *homeRepository) serviceRowsToMenus(rows []serviceRow) []*domain.ServiceMenu {
+	menus := make([]*domain.ServiceMenu, 0, len(rows))
+	for _, row := range rows {
+		menu := &domain.ServiceMenu{
+			ID:       row.ID,
+			Name:     row.Name,
+			Icon:     row.Icon,
+			IconURL:  derefStr(row.IconURL, ""),
+			Route:    row.Route,
+			Status:   row.Status,
+			Badge:    row.Badge,
+			Position: row.SortOrder,
+		}
+		if row.CategoryID != nil {
+			menu.Category = *row.CategoryID
+		}
+		menus = append(menus, menu)
+	}
+	return menus
+}
+
+func derefStr(s *string, def string) string {
+	if s != nil {
+		return *s
+	}
+	return def
 }

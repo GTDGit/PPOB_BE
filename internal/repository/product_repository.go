@@ -3,10 +3,12 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/jmoiron/sqlx"
+
 	"github.com/GTDGit/PPOB_BE/internal/domain"
 )
 
@@ -60,79 +62,48 @@ func NewProductRepository(db *sqlx.DB) ProductRepository {
 	return &productRepository{db: db}
 }
 
-// FindAllOperators returns all mobile operators
+// FindAllOperators returns all mobile operators from database
 func (r *productRepository) FindAllOperators(ctx context.Context) ([]*domain.Operator, error) {
-	operators := []*domain.Operator{
-		{
-			ID:       "telkomsel",
-			Name:     "Telkomsel",
-			Prefixes: []string{"0811", "0812", "0813", "0821", "0822", "0823", "0852", "0853"},
-			Icon:     "telkomsel",
-			IconURL:  "https://cdn.ppob.id/operators/telkomsel.png",
-			Status:   domain.StatusActive,
-		},
-		{
-			ID:       "indosat",
-			Name:     "Indosat Ooredoo",
-			Prefixes: []string{"0814", "0815", "0816", "0855", "0856", "0857", "0858"},
-			Icon:     "indosat",
-			IconURL:  "https://cdn.ppob.id/operators/indosat.png",
-			Status:   domain.StatusActive,
-		},
-		{
-			ID:       "xl",
-			Name:     "XL Axiata",
-			Prefixes: []string{"0817", "0818", "0819", "0859", "0877", "0878"},
-			Icon:     "xl",
-			IconURL:  "https://cdn.ppob.id/operators/xl.png",
-			Status:   domain.StatusActive,
-		},
-		{
-			ID:       "axis",
-			Name:     "Axis",
-			Prefixes: []string{"0831", "0832", "0833", "0838"},
-			Icon:     "axis",
-			IconURL:  "https://cdn.ppob.id/operators/axis.png",
-			Status:   domain.StatusActive,
-		},
-		{
-			ID:       "three",
-			Name:     "Tri",
-			Prefixes: []string{"0895", "0896", "0897", "0898", "0899"},
-			Icon:     "three",
-			IconURL:  "https://cdn.ppob.id/operators/three.png",
-			Status:   domain.StatusActive,
-		},
-		{
-			ID:       "smartfren",
-			Name:     "Smartfren",
-			Prefixes: []string{"0881", "0882", "0883", "0884", "0885", "0886", "0887", "0888", "0889"},
-			Icon:     "smartfren",
-			IconURL:  "https://cdn.ppob.id/operators/smartfren.png",
-			Status:   domain.StatusActive,
-		},
-		{
-			ID:       "byu",
-			Name:     "by.U",
-			Prefixes: []string{"0851"},
-			Icon:     "byu",
-			IconURL:  "https://cdn.ppob.id/operators/byu.png",
-			Status:   domain.StatusActive,
-		},
+	query := `
+		SELECT id, name, prefixes, icon, icon_url, status, sort_order
+		FROM operators
+		WHERE status = 'active'
+		ORDER BY sort_order ASC
+	`
+
+	var operators []*domain.Operator
+	if err := r.db.SelectContext(ctx, &operators, query); err != nil {
+		return []*domain.Operator{}, nil
 	}
+
+	// Parse JSON prefixes from DB text to []string
+	for _, op := range operators {
+		if op.PrefixesDB != "" {
+			json.Unmarshal([]byte(op.PrefixesDB), &op.Prefixes)
+		}
+		if op.Prefixes == nil {
+			op.Prefixes = []string{}
+		}
+	}
+
 	return operators, nil
 }
 
 // FindOperatorByPrefix finds operator by phone prefix
 func (r *productRepository) FindOperatorByPrefix(ctx context.Context, prefix string) (*domain.Operator, error) {
-	operators, _ := r.FindAllOperators(ctx)
-
-	// Check prefix (first 4 digits)
 	if len(prefix) < 4 {
 		return nil, nil
 	}
 
 	checkPrefix := prefix[:4]
+
+	// Query all active operators and check prefix in Go
+	// (prefixes is stored as JSON text, checked after parsing)
+	operators, err := r.FindAllOperators(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	for _, op := range operators {
 		for _, p := range op.Prefixes {
 			if p == checkPrefix {
@@ -143,115 +114,37 @@ func (r *productRepository) FindOperatorByPrefix(ctx context.Context, prefix str
 	return nil, nil
 }
 
-// FindAllEwalletProviders returns all e-wallet providers
+// FindAllEwalletProviders returns all e-wallet providers from database
 func (r *productRepository) FindAllEwalletProviders(ctx context.Context) ([]*domain.EwalletProvider, error) {
-	providers := []*domain.EwalletProvider{
-		{
-			ID:               "gopay",
-			Name:             "GoPay",
-			Icon:             "gopay",
-			IconURL:          "https://cdn.ppob.id/ewallet/gopay.png",
-			InputLabel:       "Nomor HP GoPay",
-			InputPlaceholder: "08xxxxxxxxxx",
-			InputType:        "phone",
-			Status:           domain.StatusActive,
-		},
-		{
-			ID:               "ovo",
-			Name:             "OVO",
-			Icon:             "ovo",
-			IconURL:          "https://cdn.ppob.id/ewallet/ovo.png",
-			InputLabel:       "Nomor HP OVO",
-			InputPlaceholder: "08xxxxxxxxxx",
-			InputType:        "phone",
-			Status:           domain.StatusActive,
-		},
-		{
-			ID:               "dana",
-			Name:             "DANA",
-			Icon:             "dana",
-			IconURL:          "https://cdn.ppob.id/ewallet/dana.png",
-			InputLabel:       "Nomor HP DANA",
-			InputPlaceholder: "08xxxxxxxxxx",
-			InputType:        "phone",
-			Status:           domain.StatusActive,
-		},
-		{
-			ID:               "shopeepay",
-			Name:             "ShopeePay",
-			Icon:             "shopeepay",
-			IconURL:          "https://cdn.ppob.id/ewallet/shopeepay.png",
-			InputLabel:       "Nomor HP ShopeePay",
-			InputPlaceholder: "08xxxxxxxxxx",
-			InputType:        "phone",
-			Status:           domain.StatusActive,
-		},
-		{
-			ID:               "linkaja",
-			Name:             "LinkAja",
-			Icon:             "linkaja",
-			IconURL:          "https://cdn.ppob.id/ewallet/linkaja.png",
-			InputLabel:       "Nomor HP LinkAja",
-			InputPlaceholder: "08xxxxxxxxxx",
-			InputType:        "phone",
-			Status:           domain.StatusActive,
-		},
+	query := `
+		SELECT id, name, icon, icon_url, input_label, input_placeholder, input_type, status, sort_order
+		FROM ewallet_providers
+		WHERE status = 'active'
+		ORDER BY sort_order ASC
+	`
+
+	var providers []*domain.EwalletProvider
+	if err := r.db.SelectContext(ctx, &providers, query); err != nil {
+		return []*domain.EwalletProvider{}, nil
 	}
+
 	return providers, nil
 }
 
-// FindAllPDAMRegions returns all PDAM regions
+// FindAllPDAMRegions returns all PDAM regions from database
 func (r *productRepository) FindAllPDAMRegions(ctx context.Context) ([]*domain.PDAMRegion, error) {
-	regions := []*domain.PDAMRegion{
-		{
-			ID:       "pdam_jakarta",
-			Name:     "PDAM DKI Jakarta",
-			Province: "DKI Jakarta",
-			Status:   domain.StatusActive,
-		},
-		{
-			ID:       "pdam_bandung",
-			Name:     "PDAM Tirta Wening Kota Bandung",
-			Province: "Jawa Barat",
-			Status:   domain.StatusActive,
-		},
-		{
-			ID:       "pdam_surabaya",
-			Name:     "PDAM Surya Sembada Surabaya",
-			Province: "Jawa Timur",
-			Status:   domain.StatusActive,
-		},
-		{
-			ID:       "pdam_semarang",
-			Name:     "PDAM Tirta Moedal Semarang",
-			Province: "Jawa Tengah",
-			Status:   domain.StatusActive,
-		},
-		{
-			ID:       "pdam_medan",
-			Name:     "PDAM Tirtanadi Medan",
-			Province: "Sumatera Utara",
-			Status:   domain.StatusActive,
-		},
-		{
-			ID:       "pdam_palembang",
-			Name:     "PDAM Tirta Musi Palembang",
-			Province: "Sumatera Selatan",
-			Status:   domain.StatusActive,
-		},
-		{
-			ID:       "pdam_makassar",
-			Name:     "PDAM Makassar",
-			Province: "Sulawesi Selatan",
-			Status:   domain.StatusActive,
-		},
-		{
-			ID:       "pdam_denpasar",
-			Name:     "PDAM Denpasar",
-			Province: "Bali",
-			Status:   domain.StatusActive,
-		},
+	query := `
+		SELECT id, name, province, status, sort_order
+		FROM pdam_regions
+		WHERE status = 'active'
+		ORDER BY sort_order ASC
+	`
+
+	var regions []*domain.PDAMRegion
+	if err := r.db.SelectContext(ctx, &regions, query); err != nil {
+		return []*domain.PDAMRegion{}, nil
 	}
+
 	return regions, nil
 }
 
@@ -387,58 +280,20 @@ func (r *productRepository) UpsertBanks(ctx context.Context, banks []*domain.Ban
 	return nil
 }
 
-// FindAllTVProviders returns all TV cable providers
+// FindAllTVProviders returns all TV cable providers from database
 func (r *productRepository) FindAllTVProviders(ctx context.Context) ([]*domain.TVProvider, error) {
-	providers := []*domain.TVProvider{
-		{
-			ID:         "indovision",
-			Name:       "Indovision",
-			Icon:       "indovision",
-			IconURL:    "https://cdn.ppob.id/tv/indovision.png",
-			InputLabel: "Nomor Pelanggan",
-			Status:     domain.StatusActive,
-		},
-		{
-			ID:         "transvision",
-			Name:       "Transvision",
-			Icon:       "transvision",
-			IconURL:    "https://cdn.ppob.id/tv/transvision.png",
-			InputLabel: "Nomor Pelanggan",
-			Status:     domain.StatusActive,
-		},
-		{
-			ID:         "topas",
-			Name:       "Topas TV",
-			Icon:       "topas",
-			IconURL:    "https://cdn.ppob.id/tv/topas.png",
-			InputLabel: "Nomor Pelanggan",
-			Status:     domain.StatusActive,
-		},
-		{
-			ID:         "firstmedia",
-			Name:       "First Media",
-			Icon:       "firstmedia",
-			IconURL:    "https://cdn.ppob.id/tv/firstmedia.png",
-			InputLabel: "Nomor Pelanggan",
-			Status:     domain.StatusActive,
-		},
-		{
-			ID:         "k_vision",
-			Name:       "K-Vision",
-			Icon:       "kvision",
-			IconURL:    "https://cdn.ppob.id/tv/kvision.png",
-			InputLabel: "Nomor Pelanggan",
-			Status:     domain.StatusActive,
-		},
-		{
-			ID:         "nex_parabola",
-			Name:       "Nex Parabola",
-			Icon:       "nexparabola",
-			IconURL:    "https://cdn.ppob.id/tv/nexparabola.png",
-			InputLabel: "Nomor Pelanggan",
-			Status:     domain.StatusActive,
-		},
+	query := `
+		SELECT id, name, icon, icon_url, input_label, status, sort_order
+		FROM tv_providers
+		WHERE status = 'active'
+		ORDER BY sort_order ASC
+	`
+
+	var providers []*domain.TVProvider
+	if err := r.db.SelectContext(ctx, &providers, query); err != nil {
+		return []*domain.TVProvider{}, nil
 	}
+
 	return providers, nil
 }
 

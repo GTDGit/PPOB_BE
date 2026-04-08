@@ -7,7 +7,10 @@ import (
 
 	"github.com/GTDGit/PPOB_BE/internal/domain"
 	"github.com/GTDGit/PPOB_BE/internal/repository"
+	"github.com/GTDGit/PPOB_BE/pkg/redis"
 )
+
+const homeCacheTTL = 5 * time.Minute
 
 // HomeService handles home screen business logic
 type HomeService struct {
@@ -15,6 +18,7 @@ type HomeService struct {
 	userRepo         repository.UserRepository
 	balanceRepo      repository.BalanceRepository
 	notificationRepo repository.NotificationRepository
+	redisClient      *redis.Client
 }
 
 // NewHomeService creates a new home service
@@ -23,12 +27,14 @@ func NewHomeService(
 	userRepo repository.UserRepository,
 	balanceRepo repository.BalanceRepository,
 	notificationRepo repository.NotificationRepository,
+	redisClient *redis.Client,
 ) *HomeService {
 	return &HomeService{
 		homeRepo:         homeRepo,
 		userRepo:         userRepo,
 		balanceRepo:      balanceRepo,
 		notificationRepo: notificationRepo,
+		redisClient:      redisClient,
 	}
 }
 
@@ -74,20 +80,20 @@ func (s *HomeService) GetHome(ctx context.Context, userID string, servicesVersio
 
 	// Build services data (with version check)
 	var servicesData *domain.HomeServicesData
-	currentServicesVersion := s.homeRepo.GetServicesVersion()
+	currentServicesVersion := s.homeRepo.GetServicesVersion(ctx)
 	if servicesVersion != currentServicesVersion {
 		servicesData = &domain.HomeServicesData{
 			Version:    currentServicesVersion,
-			Featured:   s.homeRepo.GetFeaturedServices(),
-			Categories: s.homeRepo.GetServiceCategories(),
+			Featured:   s.homeRepo.GetFeaturedServices(ctx),
+			Categories: s.homeRepo.GetServiceCategories(ctx),
 		}
 	}
 
 	// Build banners data (with version check)
 	var bannersData *domain.HomeBannersData
-	currentBannersVersion := s.homeRepo.GetBannersVersion()
+	currentBannersVersion := s.homeRepo.GetBannersVersion(ctx)
 	if bannersVersion != currentBannersVersion {
-		banners := s.homeRepo.GetBanners(domain.PlacementHome, user.Tier)
+		banners := s.homeRepo.GetBanners(ctx, domain.PlacementHome, user.Tier)
 		bannersData = &domain.HomeBannersData{
 			Version:            currentBannersVersion,
 			Placement:          domain.PlacementHome,
@@ -137,16 +143,30 @@ func (s *HomeService) GetBalance(ctx context.Context, userID string) (*domain.Ba
 
 // GetServices returns services list with version
 func (s *HomeService) GetServices(ctx context.Context, version string) (*domain.ServicesResponse, bool, error) {
-	currentVersion := s.homeRepo.GetServicesVersion()
+	currentVersion := s.homeRepo.GetServicesVersion(ctx)
 
 	// Check if client version matches (304 Not Modified)
 	if version != "" && version == currentVersion {
 		return nil, true, nil // Return true to indicate not modified
 	}
 
-	services, err := s.homeRepo.GetAllServices()
+	// Try cache
+	cacheKey := redis.HomeServicesKey()
+	var cached domain.ServicesResponse
+	if err := s.redisClient.GetJSON(ctx, cacheKey, &cached); err == nil && len(cached.Featured) > 0 {
+		cached.Version = currentVersion
+		return &cached, false, nil
+	}
+
+	// Fetch from DB
+	services, err := s.homeRepo.GetAllServices(ctx)
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to get services: %w", err)
+	}
+
+	// Cache
+	if services != nil {
+		s.redisClient.SetJSON(ctx, cacheKey, services, homeCacheTTL)
 	}
 
 	return services, false, nil
@@ -163,7 +183,7 @@ func (s *HomeService) GetBanners(ctx context.Context, userID string, placement, 
 		return nil, false, domain.ErrUserNotFound
 	}
 
-	currentVersion := s.homeRepo.GetBannersVersion()
+	currentVersion := s.homeRepo.GetBannersVersion(ctx)
 
 	// Check if client version matches (304 Not Modified)
 	if version != "" && version == currentVersion {
@@ -175,7 +195,26 @@ func (s *HomeService) GetBanners(ctx context.Context, userID string, placement, 
 		placement = domain.PlacementHome
 	}
 
-	banners := s.homeRepo.GetBanners(placement, user.Tier)
+	// Try cache
+	cacheKey := redis.HomeBannersKey(placement, user.Tier)
+	var cachedBanners []*domain.Banner
+	if err := s.redisClient.GetJSON(ctx, cacheKey, &cachedBanners); err == nil && len(cachedBanners) > 0 {
+		return &domain.BannersResponse{
+			Version:            currentVersion,
+			Placement:          placement,
+			Items:              cachedBanners,
+			AutoScrollInterval: 5000,
+			TotalItems:         len(cachedBanners),
+		}, false, nil
+	}
+
+	// Fetch from DB
+	banners := s.homeRepo.GetBanners(ctx, placement, user.Tier)
+
+	// Cache
+	if len(banners) > 0 {
+		s.redisClient.SetJSON(ctx, cacheKey, banners, homeCacheTTL)
+	}
 
 	return &domain.BannersResponse{
 		Version:            currentVersion,

@@ -110,3 +110,12 @@ func ProductBySKUKey(skuCode string) string {
 func ProductsLastSyncKey() string {
 	return "products:last_sync"
 }
+
+// Home cache keys
+func HomeServicesKey() string {
+	return "home:services"
+}
+
+func HomeBannersKey(placement, tier string) string {
+	return fmt.Sprintf("home:banners:%s:%s", placement, tier)
+}

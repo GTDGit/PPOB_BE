@@ -69,7 +69,7 @@ func main() {
 	productRepo := repository.NewProductRepository(db)
 	voucherRepo := repository.NewVoucherRepository(db)
 	contactRepo := repository.NewContactRepository(db)
-	homeRepo := repository.NewHomeRepository() // No DB needed - in-memory data
+	homeRepo := repository.NewHomeRepository(db)
 	historyRepo := repository.NewHistoryRepository(db)
 	refundRepo := repository.NewRefundRepository(db)
 	notificationRepo := repository.NewNotificationRepository(db)
@@ -171,7 +171,7 @@ func main() {
 	productService := service.NewProductService(productRepo, redisClient)
 	voucherService := service.NewVoucherService(voucherRepo)
 	contactService := service.NewContactService(contactRepo, productRepo)
-	homeService := service.NewHomeService(homeRepo, userRepo, balanceRepo, notificationRepo)
+	homeService := service.NewHomeService(homeRepo, userRepo, balanceRepo, notificationRepo, redisClient)
 	userService := service.NewUserService(userRepo, balanceRepo, historyRepo, settingsRepo)
 	historyService := service.NewHistoryService(historyRepo)
 	notificationService := service.NewNotificationService(notificationRepo, firebaseClient)
