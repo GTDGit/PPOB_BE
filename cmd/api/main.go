@@ -258,8 +258,10 @@ func main() {
 		cfg.App.FrontendURL,
 		cfg.Admin.FrontendURL,
 		cfg.Admin.CORSOrigin,
+		"https://app.ppob.id",
 		"http://localhost:3000",
 		"http://localhost:3001",
+		"http://localhost:3002",
 	}
 	router.Use(middleware.CORS(corsConfig))
 	router.Use(middleware.RequestID())
