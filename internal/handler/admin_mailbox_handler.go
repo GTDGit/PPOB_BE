@@ -2,7 +2,6 @@ package handler
 
 import (
 	"io"
-	"log"
 	"net/http"
 	"strings"
 
@@ -268,14 +267,11 @@ func (h *AdminMailboxHandler) InboundSNS(c *gin.Context) {
 		respondWithError(c, domain.ErrValidationFailed("Gagal membaca payload SNS inbound email"))
 		return
 	}
-	log.Printf("[SNS-INBOUND] content-type=%s body-len=%d body-preview=%.500s", c.ContentType(), len(body), string(body))
 	resp, err := h.mailboxService.HandleInboundSNSEvent(c.Request.Context(), body)
 	if err != nil {
-		log.Printf("[SNS-INBOUND] error: %v", err)
 		handleServiceError(c, err)
 		return
 	}
-	log.Printf("[SNS-INBOUND] success: %v", resp)
 	respondWithSuccess(c, http.StatusOK, resp)
 }
 
