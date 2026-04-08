@@ -1175,12 +1175,28 @@ func (r *AdminRepository) UpdateVoucherStatus(ctx context.Context, voucherID str
 
 func (r *AdminRepository) ListServices(ctx context.Context) ([]map[string]interface{}, error) {
 	return r.selectMaps(ctx, `
-		SELECT s.id, s.name, s.route, s.status, s.badge, s.is_featured, s.sort_order,
+		SELECT s.id, s.name, s.icon, COALESCE(s.icon_url, '') AS icon_url,
+		       s.route, s.status, COALESCE(s.badge, '') AS badge,
+		       s.is_featured, s.sort_order,
 		       COALESCE(sc.name, '') AS category_name
 		FROM services s
 		LEFT JOIN service_categories sc ON sc.id = s.category_id
 		ORDER BY s.sort_order ASC, s.name ASC
 	`)
+}
+
+func (r *AdminRepository) UpdateService(ctx context.Context, serviceID string, payload map[string]interface{}) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE services
+		SET name = $2, icon = $3, icon_url = $4, route = $5, status = $6,
+		    badge = $7, sort_order = $8, is_featured = $9, updated_at = NOW()
+		WHERE id = $1
+	`,
+		serviceID, payload["name"], payload["icon"], payload["icon_url"],
+		payload["route"], payload["status"], payload["badge"],
+		payload["sort_order"], payload["is_featured"],
+	)
+	return err
 }
 
 func (r *AdminRepository) ListProducts(ctx context.Context, search string, page, perPage int) ([]map[string]interface{}, int, error) {

@@ -407,6 +407,18 @@ func (s *AdminService) DeleteBanner(ctx context.Context, actorID, bannerID strin
 	return nil
 }
 
+func (s *AdminService) ListCatalogServices(ctx context.Context) ([]map[string]interface{}, error) {
+	return s.repo.ListServices(ctx)
+}
+
+func (s *AdminService) UpdateCatalogService(ctx context.Context, actorID, serviceID string, payload map[string]interface{}) error {
+	if err := s.repo.UpdateService(ctx, serviceID, payload); err != nil {
+		return err
+	}
+	_ = s.logAudit(ctx, actorID, "service.update", "service", serviceID, nil, payload, "", "", "success", nil)
+	return nil
+}
+
 func (s *AdminService) ListNotifications(ctx context.Context, search string, page, perPage int) (*domain.AdminListResponse, error) {
 	items, total, err := s.repo.ListNotifications(ctx, search, page, perPage)
 	if err != nil {

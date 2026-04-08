@@ -344,6 +344,9 @@ func main() {
 				adminProtected.PATCH("/banners/:id", middleware.AdminRequirePermissions("banners.manage"), adminHandler.UpdateBanner)
 				adminProtected.DELETE("/banners/:id", middleware.AdminRequirePermissions("banners.manage"), adminHandler.DeleteBanner)
 
+				adminProtected.GET("/catalog/services", middleware.AdminRequirePermissions("catalog.view"), adminHandler.ListCatalogServices)
+				adminProtected.PATCH("/catalog/services/:id", middleware.AdminRequirePermissions("catalog.view"), adminHandler.UpdateCatalogService)
+
 				adminProtected.GET("/notifications", middleware.AdminRequirePermissions("notifications.view"), adminHandler.ListNotifications)
 				adminProtected.POST("/notifications/broadcast", middleware.AdminRequirePermissions("notifications.manage"), adminHandler.BroadcastNotification)
 

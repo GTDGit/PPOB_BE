@@ -732,3 +732,25 @@ func (h *AdminHandler) RemoveAvatar(c *gin.Context) {
 	}
 	respondWithSuccess(c, http.StatusOK, gin.H{"message": "Foto profil berhasil dihapus"})
 }
+
+func (h *AdminHandler) ListCatalogServices(c *gin.Context) {
+	resp, err := h.adminService.ListCatalogServices(c.Request.Context())
+	if err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	respondWithSuccess(c, http.StatusOK, resp)
+}
+
+func (h *AdminHandler) UpdateCatalogService(c *gin.Context) {
+	var payload map[string]interface{}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		respondWithError(c, domain.ErrValidationFailed("Body request layanan tidak valid"))
+		return
+	}
+	if err := h.adminService.UpdateCatalogService(c.Request.Context(), middleware.GetAdminID(c), c.Param("id"), payload); err != nil {
+		handleServiceError(c, err)
+		return
+	}
+	respondWithSuccess(c, http.StatusOK, gin.H{"message": "Layanan berhasil diperbarui"})
+}
