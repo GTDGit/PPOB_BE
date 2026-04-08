@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -914,16 +915,34 @@ func (s *AdminMailboxService) HandleInboundSNSEvent(ctx context.Context, rawBody
 		return nil, domain.ErrValidationFailed("Object key email inbound tidak tersedia")
 	}
 
+	return s.processInboundS3Object(ctx, objectKey, notification.Receipt.Recipients, notification.Mail.MessageID, notification.Mail.Source)
+}
+
+// processInboundS3Object is the shared core for inbound email processing.
+// Used by both SNS webhook and S3 polling.
+func (s *AdminMailboxService) processInboundS3Object(ctx context.Context, objectKey string, extraRecipients []string, providerMessageID, source string) (map[string]interface{}, error) {
 	rawEmail, _, err := s.emailStorage.GetObjectBytes(ctx, objectKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch inbound email object: %w", err)
 	}
-	parsed, err := parseInboundEmail(rawEmail, notification)
+	parsed, err := parseInboundEmail(rawEmail, sesReceiptNotification{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse inbound email: %w", err)
 	}
 
-	mailbox, err := s.resolveInboundMailbox(ctx, append(notification.Receipt.Recipients, parsed.To...))
+	// Dedup: skip if this message was already processed
+	if parsed.MessageIDHeader != "" {
+		exists, err := s.repo.ExistsMessageByHeader(ctx, parsed.MessageIDHeader)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check message dedup: %w", err)
+		}
+		if exists {
+			return map[string]interface{}{"skipped": true, "reason": "duplicate", "messageIdHeader": parsed.MessageIDHeader}, nil
+		}
+	}
+
+	candidates := append(extraRecipients, parsed.To...)
+	mailbox, err := s.resolveInboundMailbox(ctx, candidates)
 	if err != nil {
 		return nil, err
 	}
@@ -945,13 +964,14 @@ func (s *AdminMailboxService) HandleInboundSNSEvent(ctx context.Context, rawBody
 		"subject":           parsed.Subject,
 		"textBody":          nullableString(parsed.TextBody),
 		"htmlBody":          nullableString(parsed.HTMLBody),
-		"providerMessageId": nullableString(notification.Mail.MessageID),
+		"providerMessageId": nullableString(providerMessageID),
 		"messageIdHeader":   nullableString(parsed.MessageIDHeader),
 		"inReplyTo":         nullableString(parsed.InReplyTo),
 		"referencesHeaders": parsed.References,
 		"receivedAt":        parsed.ReceivedAt,
 		"meta": map[string]interface{}{
-			"source": notification.Mail.Source,
+			"source":    source,
+			"objectKey": objectKey,
 		},
 		"createdAt": parsed.ReceivedAt,
 	}); err != nil {
@@ -998,6 +1018,77 @@ func (s *AdminMailboxService) HandleInboundSNSEvent(ctx context.Context, rawBody
 		"mailbox":     mailbox.Address,
 		"attachments": len(parsed.Attachments),
 	}, nil
+}
+
+// PollInboundEmails scans the S3 inbound bucket for unprocessed emails and ingests them.
+func (s *AdminMailboxService) PollInboundEmails(ctx context.Context) (int, error) {
+	if s.emailStorage == nil {
+		return 0, nil
+	}
+
+	// Scan all known prefixes used by SES receipt rules
+	prefixes := []string{"operational/", "unmapped/"}
+	processed := 0
+
+	for _, prefix := range prefixes {
+		keys, err := s.emailStorage.ListObjectKeys(ctx, prefix)
+		if err != nil {
+			log.Printf("[S3-POLL] failed to list objects with prefix %s: %v", prefix, err)
+			continue
+		}
+		for _, key := range keys {
+			// Skip SES setup notification files
+			if strings.HasSuffix(key, "AMAZON_SES_SETUP_NOTIFICATION") {
+				continue
+			}
+			result, err := s.processInboundS3Object(ctx, key, nil, "", "s3-poll")
+			if err != nil {
+				log.Printf("[S3-POLL] failed to process %s: %v", key, err)
+				continue
+			}
+			if skipped, _ := result["skipped"].(bool); skipped {
+				continue
+			}
+			log.Printf("[S3-POLL] processed %s -> thread=%s message=%s mailbox=%s", key, result["threadId"], result["messageId"], result["mailbox"])
+			processed++
+		}
+	}
+
+	return processed, nil
+}
+
+// StartInboundPoller runs the S3 polling loop in a background goroutine.
+func (s *AdminMailboxService) StartInboundPoller(ctx context.Context, interval time.Duration) {
+	if s.emailStorage == nil {
+		log.Println("[S3-POLL] email storage not configured, poller disabled")
+		return
+	}
+	go func() {
+		log.Printf("[S3-POLL] starting inbound email poller (interval: %s)", interval)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		// Run once immediately on startup
+		if count, err := s.PollInboundEmails(ctx); err != nil {
+			log.Printf("[S3-POLL] initial poll error: %v", err)
+		} else if count > 0 {
+			log.Printf("[S3-POLL] initial poll: processed %d emails", count)
+		}
+
+		for {
+			select {
+			case <-ctx.Done():
+				log.Println("[S3-POLL] poller stopped")
+				return
+			case <-ticker.C:
+				if count, err := s.PollInboundEmails(ctx); err != nil {
+					log.Printf("[S3-POLL] poll error: %v", err)
+				} else if count > 0 {
+					log.Printf("[S3-POLL] processed %d new emails", count)
+				}
+			}
+		}
+	}()
 }
 
 func (s *AdminMailboxService) HandleDeliveryEvent(ctx context.Context, rawBody []byte) (map[string]interface{}, error) {

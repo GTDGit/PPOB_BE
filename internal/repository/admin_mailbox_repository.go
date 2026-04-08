@@ -541,6 +541,13 @@ func (r *AdminRepository) CreateEmailMessage(ctx context.Context, payload map[st
 	return err
 }
 
+// ExistsMessageByHeader checks if an email message with the given message_id_header already exists.
+func (r *AdminRepository) ExistsMessageByHeader(ctx context.Context, messageIDHeader string) (bool, error) {
+	var exists bool
+	err := r.db.GetContext(ctx, &exists, `SELECT EXISTS(SELECT 1 FROM admin_email_messages WHERE message_id_header = $1)`, messageIDHeader)
+	return exists, err
+}
+
 func (r *AdminRepository) CreateEmailAttachment(ctx context.Context, payload map[string]interface{}) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO admin_email_attachments (

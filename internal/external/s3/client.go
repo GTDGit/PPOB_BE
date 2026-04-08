@@ -186,6 +186,26 @@ func (c *Client) GetPresignedURL(ctx context.Context, key string, expiration tim
 	return "", fmt.Errorf("presigned URL not implemented")
 }
 
+// ListObjectKeys lists object keys under a given prefix.
+func (c *Client) ListObjectKeys(ctx context.Context, prefix string) ([]string, error) {
+	input := &s3.ListObjectsV2Input{
+		Bucket: aws.String(c.bucket),
+		Prefix: aws.String(prefix),
+	}
+	var keys []string
+	paginator := s3.NewListObjectsV2Paginator(c.s3Client, input)
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list s3 objects: %w", err)
+		}
+		for _, obj := range page.Contents {
+			keys = append(keys, aws.ToString(obj.Key))
+		}
+	}
+	return keys, nil
+}
+
 // GetObjectBytes downloads a private object from S3.
 func (c *Client) GetObjectBytes(ctx context.Context, key string) ([]byte, string, error) {
 	output, err := c.s3Client.GetObject(ctx, &s3.GetObjectInput{

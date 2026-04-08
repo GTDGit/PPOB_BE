@@ -618,6 +618,11 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	// Start S3 inbound email poller (fallback for SNS webhook)
+	pollerCtx, pollerCancel := context.WithCancel(context.Background())
+	defer pollerCancel()
+	adminMailboxService.StartInboundPoller(pollerCtx, 2*time.Minute)
+
 	// Start server
 	go func() {
 		log.Printf("Server starting on port %d...", cfg.App.Port)
