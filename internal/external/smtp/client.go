@@ -27,6 +27,7 @@ type Client struct {
 }
 
 type SendMessageInput struct {
+	EnvelopeFrom     string // SMTP MAIL FROM (envelope sender); if empty, falls back to FromAddress
 	FromAddress      string
 	FromName         string
 	ToAddresses      []string
@@ -61,6 +62,14 @@ func (c *Client) Send(ctx context.Context, input SendMessageInput) (string, erro
 		return "", fmt.Errorf("from address is required")
 	}
 
+	// EnvelopeFrom is the SMTP MAIL FROM (envelope sender).
+	// Some providers (e.g. Alibaba DirectMail) require this to match the
+	// authenticated account, while the From header can differ.
+	envelopeFrom := strings.TrimSpace(input.EnvelopeFrom)
+	if envelopeFrom == "" {
+		envelopeFrom = from
+	}
+
 	messageID := fmt.Sprintf("<%s@ppob.id>", uuid.New().String())
 
 	msg := buildMessage(input, messageID)
@@ -74,11 +83,11 @@ func (c *Client) Send(ctx context.Context, input SendMessageInput) (string, erro
 	auth := smtp.PlainAuth("", c.cfg.Username, c.cfg.Password, c.cfg.Host)
 
 	if c.cfg.UseTLS {
-		if err := sendWithTLS(addr, auth, from, allRecipients, msg, c.cfg.Host); err != nil {
+		if err := sendWithTLS(addr, auth, envelopeFrom, allRecipients, msg, c.cfg.Host); err != nil {
 			return "", fmt.Errorf("smtp send (TLS): %w", err)
 		}
 	} else {
-		if err := sendWithSTARTTLS(addr, auth, from, allRecipients, msg, c.cfg.Host); err != nil {
+		if err := sendWithSTARTTLS(addr, auth, envelopeFrom, allRecipients, msg, c.cfg.Host); err != nil {
 			return "", fmt.Errorf("smtp send (STARTTLS): %w", err)
 		}
 	}

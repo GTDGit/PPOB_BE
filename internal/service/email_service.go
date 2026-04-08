@@ -480,6 +480,7 @@ func (s *EmailService) sendViaSMTP(ctx context.Context, req smtpSendRequest) (st
 	}
 
 	return s.smtpClient.Send(ctx, internalsmtp.SendMessageInput{
+		EnvelopeFrom:     s.emailCfg.DefaultFromEmail, // SMTP MAIL FROM must match authenticated account (e.g. noreply@ppob.id)
 		FromAddress:      firstNonEmpty(req.FromEmail, s.emailCfg.DefaultFromEmail),
 		FromName:         firstNonEmpty(req.FromName, s.emailCfg.DefaultFromName),
 		ToAddresses:      req.ToAddresses,
