@@ -728,7 +728,15 @@ func (s *PrepaidService) getProductsForService(ctx context.Context, serviceType 
 }
 
 func convertProductToInfo(product *domain.Product) *domain.ProductInfo {
-	totalPrice := product.Price + product.Admin
+	nominal := inferNominalFromProduct(product)
+
+	// Use nominal as price fallback when provider API doesn't return pricing
+	price := product.Price
+	if price == 0 && nominal > 0 {
+		price = nominal
+	}
+
+	totalPrice := price + product.Admin
 	adminFeeFormatted := formatCurrency(product.Admin)
 	totalPriceFormatted := formatCurrency(totalPrice)
 
@@ -737,9 +745,9 @@ func convertProductToInfo(product *domain.Product) *domain.ProductInfo {
 		Name:                product.Name,
 		Description:         product.Description,
 		Category:            product.Category,
-		Nominal:             inferNominalFromProduct(product),
-		Price:               product.Price,
-		PriceFormatted:      formatCurrency(product.Price),
+		Nominal:             nominal,
+		Price:               price,
+		PriceFormatted:      formatCurrency(price),
 		AdminFee:            product.Admin,
 		AdminFeeFormatted:   &adminFeeFormatted,
 		TotalPrice:          &totalPrice,
